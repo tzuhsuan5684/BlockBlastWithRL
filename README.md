@@ -191,39 +191,81 @@ for step in range(500_000):
 
 ### 組員 B — DQN
 
-- observation 有兩個 key（`board`、`pieces`），需要分別輸入 CNN 或 flatten 後合併
-- replay buffer 存的 `obs` 是 dict，注意存取方式
-- mask 從 `info["action_mask"]` 拿，每個 transition 都要一起存進 buffer
+**共用網路（必須用 `agents/network.py`，確保與 C 架構一致）：**
 
 ```python
-# buffer 存法範例
+import torch
+from agents.network import BlockBlastNet, obs_to_tensor
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+net    = BlockBlastNet(output_dim=192).to(device)
+
+# 每個 step 的動作選擇
+board, pieces = obs_to_tensor(obs, device)
+q_values = net(board, pieces)                    # (1, 192)
+
+mask_t = torch.tensor(mask, device=device)
+q_values[~mask_t] = float("-inf")               # 非法動作設為 -inf
+action = int(q_values.argmax(dim=1).item())
+```
+
+**replay buffer 要一起存 mask：**
+
+```python
 buffer.push(obs, action, reward, next_obs, terminated,
             action_mask=mask, next_action_mask=next_mask)
 ```
 
+取樣後，`next_mask` 用來 mask 掉 target Q 值裡的非法動作（Double DQN 標準做法）。
+
+---
+
 ### 組員 C — PPO
 
-使用 `sb3_contrib.MaskablePPO` + `MultiInputPolicy`：
+**方案一：用 SB3 MaskablePPO（推薦，快速跑出結果）**
+
+SB3 有自己的 policy 網路，`MultiInputPolicy` 會自動處理 Dict obs。  
+`env.action_masks()` 會被自動呼叫，不需要手動傳 mask。
 
 ```python
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from sb3_contrib import MaskablePPO
+from env import BlockBlastEnv
 
 def make_env():
     return BlockBlastEnv(reward_mode="sparse")
 
-vec_env = SubprocVecEnv([make_env] * 8)   # 8 個並行環境
+vec_env = SubprocVecEnv([make_env] * 8)
 model = MaskablePPO(
     "MultiInputPolicy", vec_env,
     learning_rate=3e-4,
-    ent_coef=0.01,        # 太小會 policy collapse
+    ent_coef=0.01,     # 太小會 policy collapse，先用 0.01
     clip_range=0.2,
     verbose=1,
 )
 model.learn(total_timesteps=500_000)
 ```
 
-> `SubprocVecEnv` 需要 `env` 可以 pickle，目前環境沒有問題。
+**方案二：自製 PPO（使用共用網路，與 B 架構真正一致）**
+
+```python
+import torch
+from agents.network import BlockBlastActorCritic, obs_to_tensor
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+ac = BlockBlastActorCritic().to(device)
+
+board, pieces = obs_to_tensor(obs, device)
+logits, value = ac(board, pieces)               # (1,192), (1,1)
+
+mask_t = torch.tensor(mask, device=device)
+logits[~mask_t] = float("-inf")                # mask 非法動作
+dist   = torch.distributions.Categorical(logits=logits)
+action = dist.sample()
+log_prob = dist.log_prob(action)
+```
+
+> `SubprocVecEnv` 需要 env 可以 pickle，目前環境沒有問題。
 
 ### 組員 D — Reward 設計
 
@@ -291,19 +333,39 @@ print(f"合法動作數：{mask.sum()}")
 
 ---
 
-## 11. 檔案結構
+## 11. CNN 網路架構（`agents/network.py`）
+
+B 和 C 共用同一份網路，確保對比公平。
+
+```
+board  (1, 8, 8) → Conv(1→32,3×3) → Conv(32→64,3×3) → Flatten(4096) → FC(128) ──┐
+                                                                                    cat(192) → FC(128) → output
+pieces (3, 5, 5) ──────────────────────────────────────── Flatten(75) → FC(64)  ──┘
+```
+
+| 類別 | 用途 | 輸出 |
+|------|------|------|
+| `BlockBlastNet` | DQN Q 網路 | `(B, 192)` Q 值 |
+| `BlockBlastActorCritic` | 自製 PPO | `(B, 192)` logits + `(B, 1)` value |
+| `obs_to_tensor(obs, device)` | numpy obs → tensor | `(board, pieces)` tuple |
+
+---
+
+## 12. 檔案結構
 
 ```
 BlockBlastWithRL/
 ├── env/
-│   ├── block_blast_env.py   # 主環境（組員 A 維護）
+│   ├── block_blast_env.py   # 主環境（組員 A 維護，禁止其他人修改）
 │   ├── shapes.py            # 35 種方塊形狀
 │   └── __init__.py
 ├── agents/
+│   ├── network.py           # 共用 CNN backbone（B、C 都用這個）
 │   ├── random_agent.py      # Random baseline（組員 E）
-│   └── greedy_agent.py      # Greedy baseline（組員 E）
+│   ├── greedy_agent.py      # Greedy baseline（組員 E）
+│   └── __init__.py
 ├── reward_functions.py      # Reward 係數（組員 D 修改）
 ├── test_env.py              # 環境驗證，改完環境請先跑這個
-├── DEVGUIDE.md              # 本文件
+├── README.md                # 本文件
 └── requirements.txt
 ```
