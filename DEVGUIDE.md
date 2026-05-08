@@ -5,6 +5,32 @@
 
 ---
 
+## Git 協作規則
+
+```bash
+# 各自開自己的 branch，不要直接在 main 上開發
+git checkout -b feature/dqn        # 組員 B
+git checkout -b feature/ppo        # 組員 C
+git checkout -b feature/reward     # 組員 D
+git checkout -b feature/baseline   # 組員 E
+```
+
+**禁止修改 `env/` 目錄下的任何檔案。**  
+有 bug 或新需求請告訴組員 A，由 A 統一修改並更新 main。
+
+每次開始工作前先 pull：
+```bash
+git pull origin main
+```
+
+開發完成後確認測試通過再 push：
+```bash
+python test_env.py   # 必須全部 PASSED
+git push origin feature/你的branch名稱
+```
+
+---
+
 ## 1. 安裝
 
 ```bash
