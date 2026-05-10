@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Evaluation outputs (圖表是衍生物，重跑就有；JSON 結果保留以便彙整)
+results/*.png
+results/*.csv
+
+# Reports build artifacts
+report/figures/*.png
+*.pdf
