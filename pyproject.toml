@@ -1,0 +1,19 @@
+[project]
+name = "blockblastwithrl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "gymnasium>=0.29",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "pillow>=10.0",
+    "sb3-contrib>=2.3",
+    "stable-baselines3>=2.3",
+    "tensorboard>=2.20.0",
+    "torch>=2.2",
+]
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cu124"
