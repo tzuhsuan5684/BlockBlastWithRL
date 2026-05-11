@@ -7,7 +7,7 @@ Usage:
     python demo/play.py --agent greedy                                    # greedy agent
     python demo/play.py --agent ppo --checkpoint checkpoints/<file>.pt    # trained PPO
     python demo/play.py --fps 10                                          # slow down
-    python demo/play.py --fps 0                                           # step on SPACE key
+    python demo/play.py --fps 0                                           # manual step: SPACE / ENTER / →
 """
 
 import sys
@@ -216,7 +216,7 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                if event.key == pygame.K_SPACE and manual:
+                if event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_RIGHT) and manual:
                     step_now = True
 
         # ── Decide whether to step ──────────────────────────────────────────
@@ -264,7 +264,7 @@ def main():
                    env.piece_shape_ids, font, font_lg)
 
         # HUD bottom-left
-        hint = "SPACE: step" if manual else f"FPS: {args.fps}  |  ESC: quit"
+        hint = "SPACE / ENTER / →: step  |  ESC: quit" if manual else f"FPS: {args.fps}  |  ESC: quit"
         screen.blit(font.render(hint, True, DIM_COLOR),
                     (MARGIN, WIN_H - 20))
 
