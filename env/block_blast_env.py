@@ -2,6 +2,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 from .shapes import SHAPES, shape_to_grid, N_SHAPES
+from reward_functions import HOLE_PENALTY, BUMPINESS_PENALTY
 
 BOARD_SIZE = 8
 N_PIECES = 3          # pieces per round
@@ -205,7 +206,7 @@ class BlockBlastEnv(gym.Env):
         return {"board": self.board.copy(), "pieces": pieces_grid}
 
     def _dense_shaping(self) -> float:
-        return -0.1 * self._count_holes() - 0.05 * self._count_bumpiness()
+        return HOLE_PENALTY * self._count_holes() + BUMPINESS_PENALTY * self._count_bumpiness()
 
     def _count_holes(self) -> int:
         """A hole is an empty cell below at least one filled cell in the same column."""
