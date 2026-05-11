@@ -222,50 +222,130 @@ buffer.push(obs, action, reward, next_obs, terminated,
 
 ### 組員 C — PPO
 
-**方案一：用 SB3 MaskablePPO（推薦，快速跑出結果）**
+採用 **方案二:自製 PPO**,使用 `agents.network.BlockBlastActorCritic` 共用 backbone,與組員 B 的 DQN 完全相同網路結構,確保 RQ1 對比公平。
 
-SB3 有自己的 policy 網路，`MultiInputPolicy` 會自動處理 Dict obs。  
-`env.action_masks()` 會被自動呼叫，不需要手動傳 mask。
+#### C-1. 套件安裝
 
-```python
-from stable_baselines3.common.vec_env import SubprocVecEnv
-from sb3_contrib import MaskablePPO
-from env import BlockBlastEnv
+```bash
+# 安裝所有套件（預設 CPU wheel，CPU 跑 500k steps 約 25 分鐘）
+uv sync
 
-def make_env():
-    return BlockBlastEnv(reward_mode="sparse")
-
-vec_env = SubprocVecEnv([make_env] * 8)
-model = MaskablePPO(
-    "MultiInputPolicy", vec_env,
-    learning_rate=3e-4,
-    ent_coef=0.01,     # 太小會 policy collapse，先用 0.01
-    clip_range=0.2,
-    verbose=1,
-)
-model.learn(total_timesteps=500_000)
+# 若有 NVIDIA GPU（可選，一次性設定）：
+uv add torch --index https://download.pytorch.org/whl/cu124 --reinstall
+uv run python -c "import torch; print(torch.cuda.is_available())"   # 應印 True
 ```
 
-**方案二：自製 PPO（使用共用網路，與 B 架構真正一致）**
+執行時 `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 自動判斷，有 GPU 就用 GPU，不用手動切。
 
-```python
-import torch
-from agents.network import BlockBlastActorCritic, obs_to_tensor
+#### C-2. 檔案架構
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-ac = BlockBlastActorCritic().to(device)
-
-board, pieces = obs_to_tensor(obs, device)
-logits, value = ac(board, pieces)               # (1,192), (1,1)
-
-mask_t = torch.tensor(mask, device=device)
-logits[~mask_t] = float("-inf")                # mask 非法動作
-dist   = torch.distributions.Categorical(logits=logits)
-action = dist.sample()
-log_prob = dist.log_prob(action)
+```
+agents/ppo/
+├── __init__.py
+├── rollout_buffer.py   # RolloutBuffer + MiniBatch,GAE backward pass
+├── ppo_agent.py        # PPOAgent class:select_action / update / save / load
+├── train_ppo.py        # 訓練主程式(SubprocVecEnv + TensorBoard + checkpoint)
+└── evaluate.py         # 載入 checkpoint 跑 N 集,輸出 E 的 JSON schema
 ```
 
-> `SubprocVecEnv` 需要 env 可以 pickle，目前環境沒有問題。
+| 檔案 | 角色 | 關鍵設計 |
+|------|------|----------|
+| `rollout_buffer.py` | 收集 rollout、算 advantage | **每筆 transition 連 action_mask 一起存**,因為 update 時要重新 mask logits |
+| `ppo_agent.py` | PPO 演算法本身 | `logits.masked_fill(~mask, -inf)` 後接 `Categorical`,自動讓非法動作機率 = 0、entropy = 0 |
+| `train_ppo.py` | 8 個 SubprocVecEnv 平行收集 | 每步從 `info["action_mask"]` 拿 mask;若該 env 剛 reset,info 是 terminal 的全 False mask,要 `env_method("action_masks")` 重抓 |
+| `evaluate.py` | 最終評估 | **deterministic = argmax(masked logits)**,不是隨機 sample,代表「模型最佳表現」 |
+
+#### C-3. 訓練指令
+
+```bash
+# 稀疏 reward
+uv run python -m agents.ppo.train_ppo --reward sparse --seed 0
+
+# 密集 reward(D 設計的 shaping)
+uv run python -m agents.ppo.train_ppo --reward dense  --seed 0
+```
+
+預設超參數(可用 CLI flag 覆寫):
+
+| 參數 | 值 | 備註 |
+|------|----|----|
+| `--total-steps`   | 500_000 | proposal 規定 |
+| `--n-envs`        | 8 | 平行 env 數,SubprocVecEnv |
+| `--n-steps`       | 128 | 每個 env 每次 rollout 步數 → 一次 update 用 1024 transitions |
+| `--n-epochs`      | 10 | 每次 rollout 重複跑 10 個 epoch |
+| `--batch-size`    | 64 | mini-batch |
+| `--lr`            | 3e-4 | |
+| `--gamma`         | 0.99 | |
+| `--gae-lambda`    | 0.95 | |
+| `--clip-range`    | 0.2 | PPO ratio 截斷範圍 |
+| `--ent-coef`      | 0.01 | 太小會 policy collapse,proposal 也提醒 |
+| `--vf-coef`       | 0.5 | value loss 權重 |
+| `--max-grad-norm` | 0.5 | gradient clipping |
+| `--ckpt-every`    | 50_000 | checkpoint 間隔(env steps) |
+
+> 預設值刻意對齊 SB3 MaskablePPO 預設,理由:「PPO 沒調好」這種質疑可以擋掉一輪。
+
+訓練輸出:
+- `checkpoints/ppo_<reward>_seed<S>_step<N>.pt` — 每 50k steps 一次
+- `runs/ppo_<reward>_seed<S>/` — TensorBoard event files
+
+#### C-4. 監看訓練曲線
+
+訓練期間另開 terminal:
+
+```bash
+uv run tensorboard --logdir runs
+```
+
+瀏覽器開 http://localhost:6006,要看的指標:
+
+| 指標 | 應該長怎樣 |
+|------|----------|
+| `rollout/ep_score_mean` | **必須上升**。沒上升 = agent 沒在學,先檢查 ent_coef、lr |
+| `rollout/ep_length_mean` | 通常跟 score 同步上升 |
+| `train/entropy` | 緩降。若 1-2 萬 step 內就掉到接近 0 → policy collapse,把 ent_coef 從 0.01 提到 0.02-0.05 |
+| `train/approx_kl` | 應在 0.005-0.02 之間。> 0.05 表示 step 太大,降低 lr |
+| `train/clip_fraction` | 0.1-0.3 之間健康。長期 > 0.4 表 ratio 常被截斷,降 lr 或加 ent_coef |
+| `train/explained_var` | 從 0 慢慢往 1 升。卡在 0 附近 = critic 學不起來 |
+
+#### C-5. 產生交給 E 的 JSON
+
+500k 訓練跑完後:
+
+```bash
+uv run python -m agents.ppo.evaluate \
+    --checkpoint checkpoints/ppo_sparse_seed0_step500000.pt \
+    --reward sparse --episodes 100 --seed 42 \
+    --out results/ppo_sparse.json \
+    --notes "PPO 500k steps, lr=3e-4, ent_coef=0.01, shared backbone with DQN"
+
+uv run python -m agents.ppo.evaluate \
+    --checkpoint checkpoints/ppo_dense_seed0_step500000.pt \
+    --reward dense --episodes 100 --seed 42 \
+    --out results/ppo_dense.json \
+    --notes "PPO 500k steps, dense reward (-0.1*holes -0.05*bumpiness)"
+```
+
+產生 `results/ppo_sparse.json` 和 `results/ppo_dense.json`,**這兩個檔要 commit**,組員 E 會從 git 收集所有人的 JSON 畫對比圖。
+
+JSON schema(11 欄,組員 E 訂):
+
+```json
+{
+  "agent": "PPO",
+  "reward_mode": "sparse",
+  "n_episodes": 100,
+  "seed": 42,
+  "mean_score": 32.5,
+  "std_score": 8.1,
+  "mean_steps": 45.2,
+  "std_steps": 6.4,
+  "raw_scores": [28, 35, ...],
+  "raw_steps":  [40, 50, ...],
+  "timestamp": "2026-05-11T14:30:00",
+  "notes": "PPO 500k steps, ..."
+}
+```
 
 ### 組員 D — Reward 設計
 

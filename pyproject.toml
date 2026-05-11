@@ -1,0 +1,16 @@
+[project]
+name = "blockblastwithrl"
+version = "0.1.0"
+description = "RL agents (PPO/DQN) trained to play Block Blast on an 8x8 grid"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "gymnasium>=0.29",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "pillow>=10.0",
+    "sb3-contrib>=2.3",
+    "stable-baselines3>=2.3",
+    "tensorboard>=2.20.0",
+    "torch>=2.2",
+]
