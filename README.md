@@ -152,15 +152,19 @@ model.learn(total_timesteps=500_000)
 
 ```python
 env = BlockBlastEnv(reward_mode="sparse")   # 預設
-env = BlockBlastEnv(reward_mode="dense")    # 組員 D 的密集版
+env = BlockBlastEnv(reward_mode="dense")    # 密集版
 ```
 
 | 模式 | 公式 |
 |------|------|
 | sparse | `+n_lines_cleared`，死局 `−10` |
-| dense | sparse `− 0.1×holes − 0.05×bumpiness` |
+| dense | sparse `+ HOLE_PENALTY × holes + BUMPINESS_PENALTY × bumpiness` |
 
-常數定義在 `reward_functions.py`，組員 D 調整係數請改那個檔案，然後在 `block_blast_env.py` 的 `_dense_shaping()` 引用。
+常數定義在 [reward_functions.py](reward_functions.py)，env 的 `_dense_shaping()` 已自動讀取。改係數只要動那個檔案即可，**不用碰 env**。
+
+**目前係數**: `HOLE_PENALTY = -0.02`, `BUMPINESS_PENALTY = -0.01`。
+
+> 📜 **歷程注記**: proposal §3.1 原案是 `-0.1 / -0.05`,但 v1 實際用了 `-0.3 / -0.1` 訓練,結果 PPO 的 critic `value_loss` 暴增到 ~150、policy 完全沒學起來。組員 C 診斷後降到 `-0.02 / -0.01`,PPO dense 分數從 1.89 跳到 4.22(+123%)。完整實驗紀錄見 [docs/ppo_journey.md](docs/ppo_journey.md)。
 
 ---
 
@@ -310,23 +314,28 @@ uv run tensorboard --logdir runs
 
 #### C-5. 產生交給 E 的 JSON
 
-500k 訓練跑完後:
+訓練跑完後(實測 sparse 在 ~700k 就 plateau,dense 在 1M 仍有上升;預設 500k 起跳,要更高分用 `--total-steps 1000000`):
 
 ```bash
 uv run python -m agents.ppo.evaluate \
-    --checkpoint checkpoints/ppo_sparse_seed0_step500000.pt \
+    --checkpoint checkpoints/ppo_sparse_seed0_step1000000.pt \
     --reward sparse --episodes 100 --seed 42 \
     --out results/ppo_sparse.json \
-    --notes "PPO 500k steps, lr=3e-4, ent_coef=0.01, shared backbone with DQN"
+    --notes "PPO 1M steps, lr=3e-4, ent_coef=0.01, shared backbone with DQN"
 
 uv run python -m agents.ppo.evaluate \
-    --checkpoint checkpoints/ppo_dense_seed0_step500000.pt \
+    --checkpoint checkpoints/ppo_dense_seed0_step1000000.pt \
     --reward dense --episodes 100 --seed 42 \
     --out results/ppo_dense.json \
-    --notes "PPO 500k steps, dense reward (-0.1*holes -0.05*bumpiness)"
+    --notes "PPO 1M steps, dense reward (HOLE_PENALTY=-0.02, BUMPINESS_PENALTY=-0.01)"
 ```
 
 產生 `results/ppo_sparse.json` 和 `results/ppo_dense.json`,**這兩個檔要 commit**,組員 E 會從 git 收集所有人的 JSON 畫對比圖。
+
+#### C-6. 開發歷程 / 後續方案
+
+- **[docs/ppo_journey.md](docs/ppo_journey.md)** — 兩輪訓練 + 關鍵 reward 修復的完整紀錄(報告 PPO 章節寫作素材)
+- **[docs/improvement_options.md](docs/improvement_options.md)** — 突破當前分數的三個方案(BC warm start / 大網路 / 加 hand-crafted features),含影響範圍與工程量比較,給組員開會討論用
 
 JSON schema(11 欄,組員 E 訂):
 
@@ -343,16 +352,22 @@ JSON schema(11 欄,組員 E 訂):
   "raw_scores": [28, 35, ...],
   "raw_steps":  [40, 50, ...],
   "timestamp": "2026-05-11T14:30:00",
-  "notes": "PPO 500k steps, ..."
+  "notes": "PPO 1M steps, ..."
 }
 ```
 
 ### 組員 D — Reward 設計
 
-只需要修改 `reward_functions.py` 的係數，然後在 `block_blast_env.py` 的 `_dense_shaping()` 中引用：
+✅ **`reward_functions.py` → `env._dense_shaping()` 的 wiring 已經接好**(2026-05 完成),改係數**只動 `reward_functions.py` 那一個檔**,env 會自動讀取:
 
 ```python
-# block_blast_env.py
+# reward_functions.py(D 動這裡就好)
+HOLE_PENALTY      = -0.02   # 目前值
+BUMPINESS_PENALTY = -0.01   # 目前值
+```
+
+```python
+# env/block_blast_env.py(已接,不用再動)
 from reward_functions import HOLE_PENALTY, BUMPINESS_PENALTY
 
 def _dense_shaping(self):
@@ -516,7 +531,7 @@ class MyAgent:
 ```
 BlockBlastWithRL/
 ├── env/                          # 組員 A 維護，禁止其他人修改
-│   ├── block_blast_env.py
+│   ├── block_blast_env.py        # 已接上 reward_functions 的 dense shaping
 │   ├── shapes.py
 │   └── __init__.py
 ├── agents/
@@ -524,25 +539,34 @@ BlockBlastWithRL/
 │   ├── random_agent.py           # 組員 E
 │   ├── greedy_agent.py           # 組員 E
 │   ├── dqn/                      # 組員 B 的地盤
-│   │   ├── train_dqn.py          # 訓練入口：python -m agents.dqn.train_dqn
+│   │   ├── train_dqn.py          # 訓練入口：uv run python -m agents.dqn.train_dqn
 │   │   ├── dqn_agent.py          # (B 自行新增)
 │   │   ├── replay_buffer.py      # (B 自行新增)
 │   │   └── __init__.py
 │   └── ppo/                      # 組員 C 的地盤
-│       ├── train_ppo.py          # 訓練入口：python -m agents.ppo.train_ppo
-│       ├── ppo_agent.py          # (C 自行新增，若不用 SB3)
+│       ├── train_ppo.py          # 訓練入口：uv run python -m agents.ppo.train_ppo
+│       ├── ppo_agent.py          # PPO 演算法核心
+│       ├── rollout_buffer.py     # GAE-λ buffer，存 action_mask
+│       ├── evaluate.py           # 載入 ckpt 跑 N 集 → JSON (E 的 schema)
 │       └── __init__.py
 ├── demo/
-│   └── play.py                   # Pygame 視覺化 demo
-├── reward_functions.py           # 組員 D 修改
+│   └── play.py                   # Pygame 視覺化 demo (random / greedy / ppo)
+├── docs/                         # 開發歷程 + 討論文件
+│   ├── ppo_journey.md            # 組員 C 的 PPO 開發紀錄(報告素材)
+│   └── improvement_options.md    # 進一步突破分數的方案討論
+├── results/                      # 各人交給組員 E 的 JSON (commit 進 git)
+├── reward_functions.py           # 組員 D 修改（env 自動讀取）
 ├── test_env.py                   # 環境驗證，push 前必跑
 ├── README.md                     # 本文件
-└── requirements.txt
+├── CLAUDE.md                     # 給 Claude Code 用的 repo 導覽
+├── requirements.txt              # pip 備案
+├── pyproject.toml + uv.lock      # uv 主依賴管理
+└── .python-version               # 3.13
 ```
 
 訓練入口用 module 方式執行（在專案根目錄下）：
 
 ```bash
-python -m agents.dqn.train_dqn
-python -m agents.ppo.train_ppo
+uv run python -m agents.dqn.train_dqn
+uv run python -m agents.ppo.train_ppo
 ```
