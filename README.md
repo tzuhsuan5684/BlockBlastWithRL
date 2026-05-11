@@ -355,17 +355,32 @@ pieces (3, 5, 5) ─────────────────────
 
 ```
 BlockBlastWithRL/
-├── env/
-│   ├── block_blast_env.py   # 主環境（組員 A 維護，禁止其他人修改）
-│   ├── shapes.py            # 35 種方塊形狀
+├── env/                          # 組員 A 維護，禁止其他人修改
+│   ├── block_blast_env.py
+│   ├── shapes.py
 │   └── __init__.py
 ├── agents/
-│   ├── network.py           # 共用 CNN backbone（B、C 都用這個）
-│   ├── random_agent.py      # Random baseline（組員 E）
-│   ├── greedy_agent.py      # Greedy baseline（組員 E）
-│   └── __init__.py
-├── reward_functions.py      # Reward 係數（組員 D 修改）
-├── test_env.py              # 環境驗證，改完環境請先跑這個
-├── README.md                # 本文件
+│   ├── network.py                # 共用 CNN backbone，B 和 C 都從這裡 import
+│   ├── random_agent.py           # 組員 E
+│   ├── greedy_agent.py           # 組員 E
+│   ├── dqn/                      # 組員 B 的地盤
+│   │   ├── train_dqn.py          # 訓練入口：python -m agents.dqn.train_dqn
+│   │   ├── dqn_agent.py          # (B 自行新增)
+│   │   ├── replay_buffer.py      # (B 自行新增)
+│   │   └── __init__.py
+│   └── ppo/                      # 組員 C 的地盤
+│       ├── train_ppo.py          # 訓練入口：python -m agents.ppo.train_ppo
+│       ├── ppo_agent.py          # (C 自行新增，若不用 SB3)
+│       └── __init__.py
+├── reward_functions.py           # 組員 D 修改
+├── test_env.py                   # 環境驗證，push 前必跑
+├── README.md                     # 本文件
 └── requirements.txt
+```
+
+訓練入口用 module 方式執行（在專案根目錄下）：
+
+```bash
+python -m agents.dqn.train_dqn
+python -m agents.ppo.train_ppo
 ```
