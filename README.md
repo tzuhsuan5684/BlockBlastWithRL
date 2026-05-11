@@ -436,27 +436,40 @@ pieces (3, 5, 5) ─────────────────────
 安裝 pygame（若尚未安裝）：
 
 ```bash
-pip install pygame
+uv add "pygame>=2.6"
 ```
 
 ### 基本執行
 
 ```bash
 # greedy agent，每秒 4 步（預設）
-python demo/play.py
+uv run python demo/play.py
 
 # random agent
-python demo/play.py --agent random
+uv run python demo/play.py --agent random
+
+# ★ 跑訓練好的 PPO checkpoint（組員 C 的成果）
+uv run python demo/play.py --agent ppo --checkpoint checkpoints/ppo_sparse_seed0_step500000.pt
 
 # 慢速，每秒 1 步
-python demo/play.py --fps 1
+uv run python demo/play.py --fps 1
 
 # 手動模式：按 SPACE 逐步，ESC 離開
-python demo/play.py --fps 0
+uv run python demo/play.py --fps 0
 
 # 跑完 N 個 episode 後自動結束
-python demo/play.py --episodes 5
+uv run python demo/play.py --episodes 5
 ```
+
+PPO 模式採 **deterministic argmax**（masked logits），跟 `agents/ppo/evaluate.py` 產 JSON 的決策方式一致 — 也就是說 demo 看到的行為 = 你交給組員 E 那份 JSON 數字背後的行為。
+
+### 跨機器跑 demo（在 server 訓練，在筆電播放）
+
+1. 在 server / GPU 機器上跑完訓練，產出 `checkpoints/ppo_*.pt`
+2. 把 `.pt` 檔（約 7 MB）拷到筆電（`scp` / 雲端 / USB 都行）
+3. 筆電上 `uv sync` 裝好 torch + pygame，跑上面的 PPO 指令
+
+`torch.load(map_location=...)` 會自動處理 GPU→CPU 轉換，不用管。
 
 ### 畫面說明
 
@@ -466,21 +479,21 @@ python demo/play.py --episodes 5
 | 右側面板 | 當前 Score、步數、Episode 編號 |
 | 方塊預覽 | 三個待放方塊，各自用不同顏色標示 |
 
-### 串接自己的 Agent
+### 串接自己的 Agent（例如組員 B 的 DQN）
 
-`demo/play.py` 使用鴨子型別（duck typing）——任何有 `select_action(obs, mask)` 方法的物件都可以直接串：
+`demo/play.py` 使用鴨子型別（duck typing）—— 任何有 `select_action(obs, mask)` 方法的物件都可以直接串。加到 `build_agent()` 即可：
 
 ```python
-# demo/play.py 內的 build_agent() 函式，加入你的 agent 即可
-def build_agent(name: str, env):
+def build_agent(name: str, env, checkpoint: str = None):
     if name == "random":
         return RandomAgent(env)
-    if name == "greedy":
-        return GreedyAgent(env)
     if name == "ppo":
-        from agents.ppo.ppo_agent import PPOAgent
-        return PPOAgent.load("checkpoints/ppo_best.pt", env)
-    # ...
+        return PPODemoAgent(env, checkpoint)
+    if name == "dqn":
+        # 組員 B 寫好 DQN 後加這段
+        from agents.dqn.dqn_agent import DQNDemoAgent
+        return DQNDemoAgent(env, checkpoint)
+    return GreedyAgent(env)
 ```
 
 Agent 只需實作一個方法：
