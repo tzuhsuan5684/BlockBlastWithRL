@@ -1,7 +1,7 @@
 [project]
 name = "blockblastwithrl"
 version = "0.1.0"
-description = "Add your description here"
+description = "RL agents (PPO/DQN) trained to play Block Blast on an 8x8 grid"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -14,6 +14,3 @@ dependencies = [
     "tensorboard>=2.20.0",
     "torch>=2.2",
 ]
-
-[[tool.uv.index]]
-url = "https://download.pytorch.org/whl/cu124"

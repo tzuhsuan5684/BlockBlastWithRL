@@ -24,8 +24,8 @@ Member A owns and maintains the environment. The primary developer-facing refere
 Project uses **uv** for Python/package management (`.python-version` pins 3.13).
 
 ```bash
-# Install deps (uv reads requirements.txt; pyproject lists no deps)
-uv pip install -r requirements.txt
+# Install deps (pyproject.toml is the source of truth; uv.lock pins exact versions)
+uv sync
 
 # Run the sanity test — required to pass before pushing env changes
 uv run python test_env.py
@@ -35,7 +35,7 @@ There is no lint/format/CI configured.
 
 ## Architecture
 
-The codebase is small (~5 source files); the non-obvious parts are the contracts between them.
+The codebase is small (env + agents/network.py + agents/ppo/ stack + a few helpers); the non-obvious parts are the contracts between them.
 
 ### Action space encoding — central to everything
 

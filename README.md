@@ -227,17 +227,15 @@ buffer.push(obs, action, reward, next_obs, terminated,
 #### C-1. 套件安裝
 
 ```bash
-# torch 預設裝 CPU wheel,500k steps 約 25 分鐘可接受
-uv add "gymnasium>=0.29" "numpy>=1.24" "matplotlib>=3.7" \
-       "stable-baselines3>=2.3" "sb3-contrib>=2.3" \
-       "torch>=2.2" "pillow>=10.0" "tensorboard>=2.16"
+# 安裝所有套件（預設 CPU wheel，CPU 跑 500k steps 約 25 分鐘）
+uv sync
 
-# 若想用 GPU(可選,一次性設定):
+# 若有 NVIDIA GPU（可選，一次性設定）：
 uv add torch --index https://download.pytorch.org/whl/cu124 --reinstall
 uv run python -c "import torch; print(torch.cuda.is_available())"   # 應印 True
 ```
 
-程式碼 `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 自動判斷,不用手動切。
+執行時 `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 自動判斷，有 GPU 就用 GPU，不用手動切。
 
 #### C-2. 檔案架構
 
