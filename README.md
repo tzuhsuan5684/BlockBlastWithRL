@@ -431,7 +431,74 @@ pieces (3, 5, 5) ─────────────────────
 
 ---
 
-## 12. 檔案結構
+## 12. Pygame Demo 視覺化
+
+安裝 pygame（若尚未安裝）：
+
+```bash
+pip install pygame
+```
+
+### 基本執行
+
+```bash
+# greedy agent，每秒 4 步（預設）
+python demo/play.py
+
+# random agent
+python demo/play.py --agent random
+
+# 慢速，每秒 1 步
+python demo/play.py --fps 1
+
+# 手動模式：按 SPACE 逐步，ESC 離開
+python demo/play.py --fps 0
+
+# 跑完 N 個 episode 後自動結束
+python demo/play.py --episodes 5
+```
+
+### 畫面說明
+
+| 區域 | 說明 |
+|------|------|
+| 左側棋盤 | 8×8 盤面，藍色 = 填滿，消除時閃黃光 |
+| 右側面板 | 當前 Score、步數、Episode 編號 |
+| 方塊預覽 | 三個待放方塊，各自用不同顏色標示 |
+
+### 串接自己的 Agent
+
+`demo/play.py` 使用鴨子型別（duck typing）——任何有 `select_action(obs, mask)` 方法的物件都可以直接串：
+
+```python
+# demo/play.py 內的 build_agent() 函式，加入你的 agent 即可
+def build_agent(name: str, env):
+    if name == "random":
+        return RandomAgent(env)
+    if name == "greedy":
+        return GreedyAgent(env)
+    if name == "ppo":
+        from agents.ppo.ppo_agent import PPOAgent
+        return PPOAgent.load("checkpoints/ppo_best.pt", env)
+    # ...
+```
+
+Agent 只需實作一個方法：
+
+```python
+class MyAgent:
+    def select_action(self, obs: dict, action_mask: np.ndarray) -> int:
+        """
+        obs         : {"board": (8,8), "pieces": (3,5,5)}  float32
+        action_mask : (192,) bool，True = 合法動作
+        return      : int，合法 action index
+        """
+        ...
+```
+
+---
+
+## 13. 檔案結構
 
 ```
 BlockBlastWithRL/
@@ -452,6 +519,8 @@ BlockBlastWithRL/
 │       ├── train_ppo.py          # 訓練入口：python -m agents.ppo.train_ppo
 │       ├── ppo_agent.py          # (C 自行新增，若不用 SB3)
 │       └── __init__.py
+├── demo/
+│   └── play.py                   # Pygame 視覺化 demo
 ├── reward_functions.py           # 組員 D 修改
 ├── test_env.py                   # 環境驗證，push 前必跑
 ├── README.md                     # 本文件
