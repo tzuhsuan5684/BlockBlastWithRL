@@ -5,3 +5,4 @@ stable-baselines3>=2.3
 sb3-contrib>=2.3      # for MaskablePPO
 torch>=2.2
 pillow>=10.0
+pygame>=2.6       # for demo/play.py
