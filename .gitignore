@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/bin/
+env/lib/
+
+# Training outputs
+runs/
+logs/
+checkpoints/
+*.pt
+*.pth
+*.pkl
+
+# Experiment results
+results/
+*.csv
+*.json
+
+# Demo recordings
+*.gif
+*.mp4
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
