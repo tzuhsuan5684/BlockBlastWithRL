@@ -1,0 +1,27 @@
+[project]
+name = "blockblastwithrl"
+version = "0.1.0"
+description = "RL agents (PPO/DQN) trained to play Block Blast on an 8x8 grid"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "gymnasium>=0.29",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "pillow>=10.0",
+    "pygame>=2.6",
+    "sb3-contrib>=2.3",
+    "stable-baselines3>=2.3",
+    "tensorboard>=2.16",
+    "torch>=2.2",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
