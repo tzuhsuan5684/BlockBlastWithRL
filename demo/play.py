@@ -225,6 +225,8 @@ def main():
 
         if do_step and flash_timer <= 0:
             action = agent.select_action(obs, mask)
+            board_snap = env.board.copy()
+            pids_snap  = list(env.piece_shape_ids)
             obs, reward, terminated, truncated, info = env.step(action)
             mask  = info["action_mask"]
             score = info["score"]
@@ -232,11 +234,14 @@ def main():
 
             lines = info["lines_cleared"]
             if lines > 0:
-                flash_rows = [r for r in range(BOARD_SIZE)
-                              if np.all(env.board[r, :] == 0.0)]  # already cleared
-                flash_cols = [c for c in range(BOARD_SIZE)
-                              if np.all(env.board[:, c] == 0.0)]
-                # re-detect from pre-clear would need extra state; just flash all 0-rows briefly
+                piece_idx = action // 64
+                row = (action % 64) // BOARD_SIZE
+                col = action % BOARD_SIZE
+                pre_clear = board_snap.copy()
+                for dr, dc in SHAPES[pids_snap[piece_idx]]:
+                    pre_clear[row + dr, col + dc] = 1.0
+                flash_rows = [r for r in range(BOARD_SIZE) if np.all(pre_clear[r, :] == 1.0)]
+                flash_cols = [c for c in range(BOARD_SIZE) if np.all(pre_clear[:, c] == 1.0)]
                 flash_timer = 0.25
 
             if terminated or truncated:
