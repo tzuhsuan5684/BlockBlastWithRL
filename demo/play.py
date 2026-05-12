@@ -2,11 +2,12 @@
 demo/play.py — Pygame visualizer for BlockBlastEnv.
 
 Usage:
-    python demo/play.py                        # greedy agent
-    python demo/play.py --agent random         # random agent
-    python demo/play.py --agent greedy         # greedy agent
-    python demo/play.py --fps 10               # slow down
-    python demo/play.py --fps 0                # step on SPACE key
+    python demo/play.py                                                   # greedy agent
+    python demo/play.py --agent random                                    # random agent
+    python demo/play.py --agent greedy                                    # greedy agent
+    python demo/play.py --agent ppo --checkpoint checkpoints/<file>.pt    # trained PPO
+    python demo/play.py --fps 10                                          # slow down
+    python demo/play.py --fps 0                                           # manual step: SPACE / ENTER / →
 """
 
 import sys
@@ -126,15 +127,53 @@ def draw_panel(surf, score, steps, ep, piece_ids, font, font_lg):
             py += h * PIECE_CELL + 24
 
 
-def build_agent(name: str, env):
+class PPODemoAgent:
+    """Wrap a trained PPO checkpoint with the (obs, mask) -> int interface.
+
+    Uses deterministic argmax over masked logits — same convention as
+    agents.ppo.evaluate, so demo behavior matches what Member E sees in
+    the JSON deliverable.
+    """
+
+    def __init__(self, env, checkpoint_path: str):
+        import torch
+        from agents.network import BlockBlastActorCritic
+
+        self.env = env
+        self.torch = torch
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = BlockBlastActorCritic().to(self.device)
+        ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        self.model.load_state_dict(ckpt["model_state_dict"])
+        self.model.eval()
+        print(f"[ppo] loaded {checkpoint_path}  (device={self.device})")
+
+    def select_action(self, obs, action_mask: np.ndarray) -> int:
+        torch = self.torch
+        with torch.no_grad():
+            board  = torch.from_numpy(obs["board"]).to(self.device).unsqueeze(0).unsqueeze(0)
+            pieces = torch.from_numpy(obs["pieces"]).to(self.device).unsqueeze(0)
+            logits, _ = self.model(board, pieces)
+            mask_t = torch.from_numpy(action_mask).to(self.device).unsqueeze(0)
+            logits = logits.masked_fill(~mask_t, float("-inf"))
+            return int(logits.argmax(dim=1).item())
+
+
+def build_agent(name: str, env, checkpoint: str = None):
     if name == "random":
         return RandomAgent(env)
+    if name == "ppo":
+        if not checkpoint:
+            raise SystemExit("--checkpoint is required for --agent ppo")
+        return PPODemoAgent(env, checkpoint)
     return GreedyAgent(env)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent", default="greedy", choices=["random", "greedy"])
+    parser.add_argument("--agent", default="greedy", choices=["random", "greedy", "ppo"])
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="path to PPO checkpoint .pt (required for --agent ppo)")
     parser.add_argument("--fps", type=float, default=4,
                         help="frames per second (0 = manual step with SPACE)")
     parser.add_argument("--episodes", type=int, default=0,
@@ -150,7 +189,7 @@ def main():
     font_lg = pygame.font.SysFont("consolas", 20, bold=True)
 
     env   = BlockBlastEnv(reward_mode="dense")
-    agent = build_agent(args.agent, env)
+    agent = build_agent(args.agent, env, checkpoint=args.checkpoint)
 
     obs, info = env.reset()
     mask  = info["action_mask"]
@@ -177,7 +216,7 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                if event.key == pygame.K_SPACE and manual:
+                if event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_RIGHT) and manual:
                     step_now = True
 
         # ── Decide whether to step ──────────────────────────────────────────
@@ -225,7 +264,7 @@ def main():
                    env.piece_shape_ids, font, font_lg)
 
         # HUD bottom-left
-        hint = "SPACE: step" if manual else f"FPS: {args.fps}  |  ESC: quit"
+        hint = "SPACE / ENTER / →: step  |  ESC: quit" if manual else f"FPS: {args.fps}  |  ESC: quit"
         screen.blit(font.render(hint, True, DIM_COLOR),
                     (MARGIN, WIN_H - 20))
 

@@ -55,7 +55,9 @@ Members B (DQN) and C (PPO) are expected to use [`BlockBlastNet`](agents/network
 
 ### Reward shaping seam
 
-[`reward_functions.py`](reward_functions.py) holds only constants (`SPARSE_LINE_REWARD`, `DEATH_PENALTY`, `HOLE_PENALTY`, `BUMPINESS_PENALTY`). The env's `_dense_shaping()` currently hardcodes `-0.1×holes − 0.05×bumpiness` rather than reading from `reward_functions.py` — Member D's job is to wire these constants in. If you're asked to tune dense rewards, this is the seam, not the env internals.
+[`reward_functions.py`](reward_functions.py) holds the constants (`SPARSE_LINE_REWARD`, `DEATH_PENALTY`, `HOLE_PENALTY`, `BUMPINESS_PENALTY`); the env's `_dense_shaping()` reads `HOLE_PENALTY` and `BUMPINESS_PENALTY` from it via `from reward_functions import ...`. The wiring is complete — to tune dense rewards, only edit `reward_functions.py`. Current values: `HOLE_PENALTY = -0.02`, `BUMPINESS_PENALTY = -0.01`.
+
+**Hard-won lesson (don't re-learn it)**: at the proposal-default magnitude `(-0.1, -0.05)` and especially at `(-0.3, -0.1)` that briefly lived in the repo, per-step shaping (−1 to −3 in typical mid-game states) overwhelms the +1 line-clear reward. The PPO critic's value loss explodes (~150), `approx_kl` rises above 0.05, and policy gradient gets clipped out — the agent ends up "learning" to die early to avoid accumulating negative reward. Reducing magnitudes 5–15× (current `−0.02 / −0.01`) keeps shaping as a gentle nudge rather than a dominant force, and recovers `value_loss < 1`. See [docs/ppo_journey.md](docs/ppo_journey.md) for the full diagnostic chain.
 
 ### Shape catalogue
 
@@ -66,6 +68,23 @@ Members B (DQN) and C (PPO) are expected to use [`BlockBlastNet`](agents/network
 - [README.md](README.md) — the canonical contract and per-member usage examples (Chinese).
 - [env/block_blast_env.py](env/block_blast_env.py) — env, action encoding, action masking, dense-shaping helpers.
 - [agents/network.py](agents/network.py) — shared CNN backbone and `obs_to_tensor`.
+- [agents/ppo/](agents/ppo/) — Member C's custom PPO (rollout buffer, agent, train, evaluate, BC pretraining if added).
 - [agents/greedy_agent.py](agents/greedy_agent.py) — one-step-lookahead baseline; useful reference for how to simulate an action without mutating env state.
+- [reward_functions.py](reward_functions.py) — dense-shaping coefficients (env imports from here, see "Reward shaping seam" above).
+- [demo/play.py](demo/play.py) — pygame visualizer; supports `--agent random/greedy/ppo` with `--checkpoint` for the PPO case.
+- [docs/ppo_journey.md](docs/ppo_journey.md) — narrative of Member C's PPO work, including the v1→v2 reward-coefficient diagnostic. Read this before re-tuning dense shaping.
+- [docs/improvement_options.md](docs/improvement_options.md) — three options (BC warm-start / bigger network / handcrafted features) to push PPO past its current ~4 score plateau, with impact/effort/cross-member trade-offs.
 - [test_env.py](test_env.py) — acceptance tests for the env contract.
-- `main.py` and `proposal.docx` exist but are not part of the runtime; ignore unless asked.
+- `proposal.docx` exists but is not part of the runtime; ignore unless asked.
+
+## Empirical Snapshot (2026-05)
+
+Reference numbers from Member C's 1M-step runs, useful as sanity checks if you re-train:
+
+| Agent | reward_mode | ep_score_mean | ep_score_max | notes |
+|---|---|---|---|---|
+| Random | — | ~2 | — | uniform-from-legal baseline |
+| PPO | sparse | 2.82 | ~14 | plateaus around 700k steps |
+| PPO | dense | 4.22 | ~16 | still improving at 1M; ablation winner |
+
+If a new training run is producing `ep_score_mean < 1` with `value_loss > 50`, suspect that someone bumped the shaping coefficients back up — check `reward_functions.py` first.

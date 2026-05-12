@@ -6,9 +6,12 @@ __pycache__/
 venv/
 
 # Training outputs — 過大,不進 git
-runs/                # TensorBoard event files
-logs/                # 任何訓練 log
-checkpoints/         # 模型權重
+# TensorBoard event files
+runs/
+# 任何訓練 log
+logs/
+# 模型權重
+checkpoints/
 *.pt
 *.pth
 *.pkl
