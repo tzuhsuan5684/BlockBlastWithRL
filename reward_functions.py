@@ -15,7 +15,8 @@ Coefficient history:
   signal as a gentle nudge rather than a dominant force.
 """
 
-SPARSE_LINE_REWARD = 1.0
-DEATH_PENALTY      = -10.0
-HOLE_PENALTY       = -0.02
-BUMPINESS_PENALTY  = -0.01
+SPARSE_LINE_REWARD  = 1.0
+DEATH_PENALTY       = -10.0
+HOLE_PENALTY        = -0.02
+BUMPINESS_PENALTY   = -0.01
+COMBO_STREAK_BONUS  = 0.2   # streak 每多 1 層，reward 多 ×0.2

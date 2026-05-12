@@ -2,7 +2,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 from .shapes import SHAPES, shape_to_grid, N_SHAPES
-from reward_functions import HOLE_PENALTY, BUMPINESS_PENALTY
+from reward_functions import HOLE_PENALTY, BUMPINESS_PENALTY, COMBO_STREAK_BONUS
 
 BOARD_SIZE = 8
 N_PIECES = 3          # pieces per round
@@ -51,6 +51,7 @@ class BlockBlastEnv(gym.Env):
         self.piece_shape_ids: list = None   # length-3 list; –1 means slot used
         self.score: int = 0
         self.steps: int = 0
+        self.combo_streak: int = 0
 
     # ------------------------------------------------------------------
     # Core Gymnasium API
@@ -62,6 +63,7 @@ class BlockBlastEnv(gym.Env):
         self.piece_shape_ids = self._sample_pieces()
         self.score = 0
         self.steps = 0
+        self.combo_streak = 0
 
         obs = self._get_obs()
         info = {"action_mask": self.action_masks(), "score": 0}
@@ -89,7 +91,12 @@ class BlockBlastEnv(gym.Env):
             self.piece_shape_ids = self._sample_pieces()
 
         # --- compute reward ---
-        reward = float(lines)
+        if lines > 0:
+            self.combo_streak += 1
+            reward = float(lines ** 2) * (1.0 + COMBO_STREAK_BONUS * self.combo_streak)
+        else:
+            self.combo_streak = 0
+            reward = 0.0
         if self.reward_mode == "dense":
             reward += self._dense_shaping()
 
@@ -105,6 +112,7 @@ class BlockBlastEnv(gym.Env):
             "score":         self.score,
             "steps":         self.steps,
             "lines_cleared": lines,
+            "combo_streak":  self.combo_streak,
         }
         return obs, reward, terminated, False, info
 
