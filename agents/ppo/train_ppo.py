@@ -50,7 +50,7 @@ def parse_args():
     p.add_argument("--ent-coef",      type=float, default=0.01)
     p.add_argument("--vf-coef",       type=float, default=0.5)
     p.add_argument("--max-grad-norm", type=float, default=0.5)
-    p.add_argument("--ckpt-dir",  type=str, default="checkpoints")
+    p.add_argument("--ckpt-dir",  type=str, default="agents/ppo/checkpoints")
     p.add_argument("--log-dir",   type=str, default="runs")
     p.add_argument("--ckpt-every", type=int, default=50_000,
                    help="save a checkpoint every N env steps")
