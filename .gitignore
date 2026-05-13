@@ -2,15 +2,17 @@
 __pycache__/
 *.py[cod]
 *.pyo
-.venv/
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment
+# .venv/
+.venv*
 venv/
 
 # Training outputs — 過大,不進 git
-# TensorBoard event files
 runs/
-# 任何訓練 log
 logs/
-# 模型權重
 checkpoints/
 *.pt
 *.pth
@@ -19,19 +21,27 @@ checkpoints/
 # 實驗結果
 # 注意:results/*.json 是要交給組員 E 的 deliverable,**必須** commit
 # (E 會從各人 branch / merged main 收集這些 JSON 畫對比圖)
-# 這裡只忽略原始 dump / 中間檔
+# 這裡只忽略原始 dump / 中間檔 / 圖表衍生物
 results/raw/
 results/tmp/
+results/*.png
+results/*.csv
 *.csv
 
 # Demo recordings
 *.gif
 *.mp4
 
+# Reports build artifacts
+report/figures/*.png
+*.pdf
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
 
-# OS
+# Editor / OS
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
