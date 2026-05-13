@@ -6,10 +6,12 @@ class BlockBlastNet(nn.Module):
     """
     Shared CNN backbone for both DQN (Member B) and PPO (Member C).
 
-    Architecture (Method 1 — dual-head):
+    Architecture:
 
-        board  (1, 8, 8) ──► CNN ──► flatten ──► 128-d ──┐
-        pieces (3×5×5=75) ─► FC  ──────────────► 64-d  ──┴──► FC ──► output
+        board  (1, 8, 8)  ──► CNN ──► flatten ──► 128-d ──┐
+        piece_0 (1, 5, 5) ─┐                               │
+        piece_1 (1, 5, 5) ─┼─► shared piece CNN ──► 96-d ─┴──► FC ──► output
+        piece_2 (1, 5, 5) ─┘   (32-d each, weight-shared)
 
     Args:
         output_dim : number of output units
@@ -32,16 +34,18 @@ class BlockBlastNet(nn.Module):
             nn.ReLU(),
         )
 
-        # --- pieces branch: 3×5×5=75 → 64-d ---
-        self.pieces_fc = nn.Sequential(
-            nn.Flatten(),          # (3,5,5) → 75
-            nn.Linear(75, 64),
+        # --- piece branch: (1, 5, 5) → 32-d, weight-shared across 3 pieces ---
+        self.piece_cnn = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),   # (16, 5, 5)
+            nn.ReLU(),
+            nn.Flatten(),                                  # 16×5×5 = 400
+            nn.Linear(400, 32),
             nn.ReLU(),
         )
 
-        # --- combined head: 128+64=192 → output_dim ---
+        # --- combined head: 128+96=224 → output_dim ---
         self.head = nn.Sequential(
-            nn.Linear(192, 128),
+            nn.Linear(224, 128),
             nn.ReLU(),
             nn.Linear(128, output_dim),
         )
@@ -54,10 +58,12 @@ class BlockBlastNet(nn.Module):
         Returns:
             (B, output_dim) float32
         """
-        b_feat = self.board_cnn(board)     # (B, 128)
-        p_feat = self.pieces_fc(pieces)    # (B, 64)
-        x = torch.cat([b_feat, p_feat], dim=1)   # (B, 192)
-        return self.head(x)                # (B, output_dim)
+        b_feat = self.board_cnn(board)                        # (B, 128)
+        B = pieces.shape[0]
+        p_feat = self.piece_cnn(pieces.view(B * 3, 1, 5, 5))  # (B*3, 32)
+        p_feat = p_feat.view(B, 96)                            # (B, 96)
+        x = torch.cat([b_feat, p_feat], dim=1)                 # (B, 224)
+        return self.head(x)                                    # (B, output_dim)
 
 
 def obs_to_tensor(obs: dict, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
@@ -117,14 +123,17 @@ class BlockBlastActorCritic(nn.Module):
             nn.ReLU(),
         )
 
-        self.pieces_fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(75, 64),
+        # weight-shared CNN for each of the 3 pieces: (1,5,5) → 32-d
+        self.piece_cnn = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),   # (16, 5, 5)
+            nn.ReLU(),
+            nn.Flatten(),                                  # 400
+            nn.Linear(400, 32),
             nn.ReLU(),
         )
 
         self.shared = nn.Sequential(
-            nn.Linear(192, 128),
+            nn.Linear(224, 128),   # 128 (board) + 96 (3×32 pieces)
             nn.ReLU(),
         )
 
@@ -137,7 +146,9 @@ class BlockBlastActorCritic(nn.Module):
             logits : (B, 192)
             value  : (B, 1)
         """
-        b_feat = self.board_cnn(board)
-        p_feat = self.pieces_fc(pieces)
-        x = self.shared(torch.cat([b_feat, p_feat], dim=1))
+        b_feat = self.board_cnn(board)                         # (B, 128)
+        B = pieces.shape[0]
+        p_feat = self.piece_cnn(pieces.view(B * 3, 1, 5, 5))   # (B*3, 32)
+        p_feat = p_feat.view(B, 96)                             # (B, 96)
+        x = self.shared(torch.cat([b_feat, p_feat], dim=1))    # (B, 128)
         return self.actor(x), self.critic(x)
