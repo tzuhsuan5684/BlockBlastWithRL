@@ -80,7 +80,8 @@ function Invoke-Eval([string]$reward) {
     Write-Host "  checkpoint: $ckpt"
 
     New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
-    $outFile = "$ResultsDir/ppo_${reward}_seed${Seed}.json"
+    $ts      = Get-Date -Format "yyyyMMdd_HHmmss"
+    $outFile = "$ResultsDir/ppo_${reward}_seed${Seed}_${ts}.json"
 
     uv run python -m agents.ppo.evaluate `
         --checkpoint $ckpt `

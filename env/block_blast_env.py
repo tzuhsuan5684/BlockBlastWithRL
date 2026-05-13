@@ -14,9 +14,10 @@ class BlockBlastEnv(gym.Env):
     Block Blast on an 8×8 grid, Gymnasium-compatible.
 
     Observation (Dict):
-        board  : float32 (8, 8)      – 0 empty, 1 filled
-        pieces : float32 (3, 5, 5)   – each piece rendered in a 5×5 grid
-                                       all-zeros when that slot is already used
+        board       : float32 (8, 8)    – 0 empty, 1 filled
+        pieces      : float32 (3, 5, 5) – each piece rendered in a 5×5 grid;
+                                          all-zeros when that slot is already used
+        pieces_left : float32 (3,)      – binary mask; 1 if slot still has a piece
 
     Action (Discrete 192):
         action = piece_idx * 64 + row * 8 + col
@@ -41,8 +42,9 @@ class BlockBlastEnv(gym.Env):
         self.render_mode = render_mode
 
         self.observation_space = spaces.Dict({
-            "board":  spaces.Box(0.0, 1.0, (BOARD_SIZE, BOARD_SIZE), dtype=np.float32),
-            "pieces": spaces.Box(0.0, 1.0, (N_PIECES, 5, 5),         dtype=np.float32),
+            "board":       spaces.Box(0.0, 1.0, (BOARD_SIZE, BOARD_SIZE), dtype=np.float32),
+            "pieces":      spaces.Box(0.0, 1.0, (N_PIECES, 5, 5),         dtype=np.float32),
+            "pieces_left": spaces.Box(0.0, 1.0, (N_PIECES,),              dtype=np.float32),
         })
         self.action_space = spaces.Discrete(N_ACTIONS)
 
@@ -208,10 +210,12 @@ class BlockBlastEnv(gym.Env):
 
     def _get_obs(self) -> dict:
         pieces_grid = np.zeros((N_PIECES, 5, 5), dtype=np.float32)
+        pieces_left = np.zeros(N_PIECES, dtype=np.float32)
         for i, pid in enumerate(self.piece_shape_ids):
             if pid != -1:
                 pieces_grid[i] = shape_to_grid(SHAPES[pid])
-        return {"board": self.board.copy(), "pieces": pieces_grid}
+                pieces_left[i] = 1.0
+        return {"board": self.board.copy(), "pieces": pieces_grid, "pieces_left": pieces_left}
 
     def _dense_shaping(self) -> float:
         return HOLE_PENALTY * self._count_holes() + BUMPINESS_PENALTY * self._count_bumpiness()

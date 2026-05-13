@@ -39,9 +39,10 @@ from agents.network import BlockBlastActorCritic
 
 
 def _obs_to_torch(obs: dict, device: torch.device):
-    board  = torch.from_numpy(obs["board"]).to(device).unsqueeze(0).unsqueeze(0)   # (1,1,8,8)
-    pieces = torch.from_numpy(obs["pieces"]).to(device).unsqueeze(0)               # (1,3,5,5)
-    return board, pieces
+    board       = torch.from_numpy(obs["board"]).to(device).unsqueeze(0).unsqueeze(0)  # (1,1,8,8)
+    pieces      = torch.from_numpy(obs["pieces"]).to(device).unsqueeze(0)              # (1,3,5,5)
+    pieces_left = torch.from_numpy(obs["pieces_left"]).to(device).unsqueeze(0)         # (1,3)
+    return board, pieces, pieces_left
 
 
 @torch.no_grad()
@@ -69,8 +70,8 @@ def evaluate(
         mask = info["action_mask"]
         steps = 0
         while True:
-            board, pieces = _obs_to_torch(obs, device)
-            logits, _ = model(board, pieces)
+            board, pieces, pieces_left = _obs_to_torch(obs, device)
+            logits, _ = model(board, pieces, pieces_left)
             mask_t = torch.from_numpy(mask).to(device).unsqueeze(0)
             logits = logits.masked_fill(~mask_t, float("-inf"))
             action = int(logits.argmax(dim=1).item())
