@@ -51,14 +51,16 @@ class PPOAgent:
 
         board comes in as (N, 8, 8); BlockBlastActorCritic expects (N, 1, 8, 8).
         """
-        board  = torch.from_numpy(obs["board"]).to(self.device).unsqueeze(1)
-        pieces = torch.from_numpy(obs["pieces"]).to(self.device)
-        mask   = torch.from_numpy(action_mask).to(self.device)
-        return board, pieces, mask
+        board       = torch.from_numpy(obs["board"]).to(self.device).unsqueeze(1)
+        pieces      = torch.from_numpy(obs["pieces"]).to(self.device)
+        pieces_left = torch.from_numpy(obs["pieces_left"]).to(self.device)
+        mask        = torch.from_numpy(action_mask).to(self.device)
+        return board, pieces, pieces_left, mask
 
-    def _masked_dist_and_value(self, board: torch.Tensor, pieces: torch.Tensor, mask: torch.Tensor):
+    def _masked_dist_and_value(self, board: torch.Tensor, pieces: torch.Tensor,
+                                pieces_left: torch.Tensor, mask: torch.Tensor):
         """Forward pass + apply mask → (Categorical, value)."""
-        logits, value = self.model(board, pieces)
+        logits, value = self.model(board, pieces, pieces_left)
         logits = logits.masked_fill(~mask, float("-inf"))
         return Categorical(logits=logits), value.squeeze(-1)
 
@@ -72,8 +74,8 @@ class PPOAgent:
 
         Returns numpy arrays so they can go straight into the env and buffer.
         """
-        board, pieces, mask = self._to_torch(obs, action_mask)
-        dist, value = self._masked_dist_and_value(board, pieces, mask)
+        board, pieces, pieces_left, mask = self._to_torch(obs, action_mask)
+        dist, value = self._masked_dist_and_value(board, pieces, pieces_left, mask)
         action = dist.sample()
         log_prob = dist.log_prob(action)
         return (
@@ -85,8 +87,8 @@ class PPOAgent:
     @torch.no_grad()
     def predict_values(self, obs: dict, action_mask: np.ndarray) -> np.ndarray:
         """V(s) for bootstrapping the final step of a rollout."""
-        board, pieces, mask = self._to_torch(obs, action_mask)
-        _, value = self._masked_dist_and_value(board, pieces, mask)
+        board, pieces, pieces_left, mask = self._to_torch(obs, action_mask)
+        _, value = self._masked_dist_and_value(board, pieces, pieces_left, mask)
         return value.cpu().numpy()
 
     # ------------------------------------------------------------------
@@ -100,7 +102,7 @@ class PPOAgent:
         for _ in range(self.n_epochs):
             for batch in buffer.get(self.batch_size, self.device):
                 board = batch.boards.unsqueeze(1)  # (B, 1, 8, 8)
-                logits, value = self.model(board, batch.pieces)
+                logits, value = self.model(board, batch.pieces, batch.pieces_left)
                 value = value.squeeze(-1)
 
                 logits = logits.masked_fill(~batch.action_masks, float("-inf"))

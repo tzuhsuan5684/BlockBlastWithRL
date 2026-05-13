@@ -18,6 +18,7 @@ import torch
 class MiniBatch:
     boards: torch.Tensor          # (B, 8, 8) float32
     pieces: torch.Tensor          # (B, 3, 5, 5) float32
+    pieces_left: torch.Tensor     # (B, 3) float32
     actions: torch.Tensor         # (B,) int64
     old_log_probs: torch.Tensor   # (B,) float32
     advantages: torch.Tensor      # (B,) float32
@@ -44,6 +45,7 @@ class RolloutBuffer:
 
         self.boards       = np.zeros((n_steps, n_envs, *board_shape),  dtype=np.float32)
         self.pieces       = np.zeros((n_steps, n_envs, *pieces_shape), dtype=np.float32)
+        self.pieces_left  = np.zeros((n_steps, n_envs, 3),             dtype=np.float32)
         self.actions      = np.zeros((n_steps, n_envs),                dtype=np.int64)
         self.log_probs    = np.zeros((n_steps, n_envs),                dtype=np.float32)
         self.values       = np.zeros((n_steps, n_envs),                dtype=np.float32)
@@ -58,11 +60,12 @@ class RolloutBuffer:
         self.full = False
 
     def add(self, obs, action, log_prob, value, reward, done, action_mask):
-        """obs is a dict from VecEnv: {board: (N,8,8), pieces: (N,3,5,5)}."""
+        """obs is a dict from VecEnv: {board, pieces, pieces_left}."""
         assert not self.full, "buffer is full — call reset() first"
         i = self.ptr
         self.boards[i]       = obs["board"]
         self.pieces[i]       = obs["pieces"]
+        self.pieces_left[i]  = obs["pieces_left"]
         self.actions[i]      = action
         self.log_probs[i]    = log_prob
         self.values[i]       = value
@@ -102,6 +105,7 @@ class RolloutBuffer:
 
         flat_boards       = self.boards.reshape(total, *self.boards.shape[2:])
         flat_pieces       = self.pieces.reshape(total, *self.pieces.shape[2:])
+        flat_pieces_left  = self.pieces_left.reshape(total, 3)
         flat_actions      = self.actions.reshape(total)
         flat_log_probs    = self.log_probs.reshape(total)
         flat_advantages   = self.advantages.reshape(total)
@@ -113,6 +117,7 @@ class RolloutBuffer:
             yield MiniBatch(
                 boards        = torch.from_numpy(flat_boards[idx]).to(device),
                 pieces        = torch.from_numpy(flat_pieces[idx]).to(device),
+                pieces_left   = torch.from_numpy(flat_pieces_left[idx]).to(device),
                 actions       = torch.from_numpy(flat_actions[idx]).to(device),
                 old_log_probs = torch.from_numpy(flat_log_probs[idx]).to(device),
                 advantages    = torch.from_numpy(flat_advantages[idx]).to(device),
