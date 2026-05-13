@@ -60,7 +60,8 @@ def parse_args():
 def train(args):
     tag = f"ppo_{args.reward}_seed{args.seed}"
     ckpt_dir = Path(args.ckpt_dir); ckpt_dir.mkdir(parents=True, exist_ok=True)
-    log_dir  = Path(args.log_dir) / tag; log_dir.mkdir(parents=True, exist_ok=True)
+    run_id   = time.strftime("%Y%m%d_%H%M%S")
+    log_dir  = Path(args.log_dir) / tag / run_id; log_dir.mkdir(parents=True, exist_ok=True)
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
