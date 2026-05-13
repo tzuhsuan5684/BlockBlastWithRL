@@ -54,6 +54,8 @@ def parse_args():
     p.add_argument("--log-dir",   type=str, default="runs")
     p.add_argument("--ckpt-every", type=int, default=50_000,
                    help="save a checkpoint every N env steps")
+    p.add_argument("--bc-checkpoint", type=str, default=None,
+                   help="Path to BC pretrained weights (agents/bc/bc_weights.pt) to warm-start from")
     return p.parse_args()
 
 
@@ -78,6 +80,9 @@ def train(args):
         n_epochs=args.n_epochs, batch_size=args.batch_size,
         device=device,
     )
+    if args.bc_checkpoint:
+        agent.load(args.bc_checkpoint, load_optimizer=False)
+        print(f"[{tag}] Warm-started from BC checkpoint: {args.bc_checkpoint}")
     buffer = RolloutBuffer(
         n_steps=args.n_steps, n_envs=args.n_envs,
         gamma=args.gamma, gae_lambda=args.gae_lambda,
