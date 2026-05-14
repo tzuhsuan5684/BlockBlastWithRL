@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class BlockBlastNet(nn.Module):
@@ -8,47 +9,61 @@ class BlockBlastNet(nn.Module):
 
     Architecture:
 
-        board  (1, 8, 8)  ──► CNN ──► flatten ──► 128-d ──┐
-        piece_0 (1, 5, 5) ─┐                               │
-        piece_1 (1, 5, 5) ─┼─► shared piece CNN ──► 96-d ─┴──► FC ──► output
-        piece_2 (1, 5, 5) ─┘   (32-d each, weight-shared)
+        board  (1, 8, 8)  ──► board_encoder ──► (64, 8, 8) ──┐
+        piece_0 (1, 5, 5) ─┐                                   │ cat on channel
+        piece_1 (1, 5, 5) ─┼─► piece_encoder ──► pad to 8×8   │ dim → (112, 8, 8)
+        piece_2 (1, 5, 5) ─┘   (16ch each, weight-shared)  ──►┘
+                                                               ↓
+                                               fusion conv → flatten → 128-d
+                                                               ↓
+                                          cat pieces_left (3-d) → 131-d → head
+
+    Spatial fusion lets the conv layers compare board features and piece shapes
+    at the same grid resolution before compressing to a vector.
 
     Args:
-        output_dim : number of output units
-                     DQN  → N_ACTIONS (192)  — Q-values
-                     PPO  → N_ACTIONS (192)  — logits  (actor)
-                             1               — value   (critic, separate head)
+        output_dim : DQN → 192 (Q-values), PPO actor → 192 (logits)
     """
 
     def __init__(self, output_dim: int = 192):
         super().__init__()
 
-        # --- board branch: (1, 8, 8) → 128-d ---
-        self.board_cnn = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),   # (32, 8, 8)
+        # board: (1, 8, 8) → (64, 8, 8)  [no flatten yet]
+        self.board_encoder = nn.Sequential(
+            nn.Conv2d(1,  32, kernel_size=3, padding=1),  # (32, 8, 8)
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),  # (64, 8, 8)
             nn.ReLU(),
-            nn.Flatten(),                                  # 64×8×8 = 4096
+        )
+
+        # per-piece: (1, 5, 5) → (16, 5, 5), weight-shared
+        self.piece_encoder = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),   # (16, 5, 5)
+            nn.ReLU(),
+        )
+
+        # fusion: (64+48, 8, 8) → 128-d
+        self.fusion = nn.Sequential(
+            nn.Conv2d(112, 64, kernel_size=3, padding=1),  # (64, 8, 8)
+            nn.ReLU(),
+            nn.Flatten(),                                   # 64×8×8 = 4096
             nn.Linear(4096, 128),
             nn.ReLU(),
         )
 
-        # --- piece branch: (1, 5, 5) → 32-d, weight-shared across 3 pieces ---
-        self.piece_cnn = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=3, padding=1),   # (16, 5, 5)
-            nn.ReLU(),
-            nn.Flatten(),                                  # 16×5×5 = 400
-            nn.Linear(400, 32),
-            nn.ReLU(),
-        )
-
-        # --- combined head: 128+96+3=227 → output_dim ---
+        # head: 128 + 3 (pieces_left) → output_dim
         self.head = nn.Sequential(
-            nn.Linear(227, 128),
+            nn.Linear(131, 128),
             nn.ReLU(),
             nn.Linear(128, output_dim),
         )
+
+    def _encode_pieces(self, pieces: torch.Tensor) -> torch.Tensor:
+        """(B, 3, 5, 5) → (B, 48, 8, 8): encode + pad each piece to board size."""
+        B = pieces.shape[0]
+        p = self.piece_encoder(pieces.view(B * 3, 1, 5, 5))  # (B*3, 16, 5, 5)
+        p = F.pad(p, (0, 3, 0, 3))                            # (B*3, 16, 8, 8)
+        return p.view(B, 48, 8, 8)                             # (B,   48, 8, 8)
 
     def forward(self, board: torch.Tensor, pieces: torch.Tensor, pieces_left: torch.Tensor) -> torch.Tensor:
         """
@@ -59,12 +74,11 @@ class BlockBlastNet(nn.Module):
         Returns:
             (B, output_dim) float32
         """
-        b_feat = self.board_cnn(board)                        # (B, 128)
-        B = pieces.shape[0]
-        p_feat = self.piece_cnn(pieces.view(B * 3, 1, 5, 5))  # (B*3, 32)
-        p_feat = p_feat.view(B, 96)                            # (B, 96)
-        x = torch.cat([b_feat, p_feat, pieces_left], dim=1)   # (B, 227)
-        return self.head(x)                                    # (B, output_dim)
+        b = self.board_encoder(board)        # (B, 64, 8, 8)
+        p = self._encode_pieces(pieces)      # (B, 48, 8, 8)
+        x = self.fusion(torch.cat([b, p], dim=1))       # (B, 128)
+        x = torch.cat([x, pieces_left], dim=1)           # (B, 131)
+        return self.head(x)                              # (B, output_dim)
 
 
 def obs_to_tensor(obs: dict, device: torch.device) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -104,12 +118,11 @@ def obs_to_tensor(obs: dict, device: torch.device) -> tuple[torch.Tensor, torch.
 
 class BlockBlastActorCritic(nn.Module):
     """
-    Shared backbone + separate actor/critic heads for PPO.
+    Shared spatial-fusion backbone + separate actor/critic heads for PPO.
 
     Usage:
         model = BlockBlastActorCritic()
-        logits, value = model(board, pieces)
-        # apply mask before softmax:
+        logits, value = model(board, pieces, pieces_left)
         logits[~mask] = float("-inf")
         dist = Categorical(logits=logits)
     """
@@ -117,32 +130,44 @@ class BlockBlastActorCritic(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.board_cnn = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+        # board: (1, 8, 8) → (64, 8, 8)
+        self.board_encoder = nn.Sequential(
+            nn.Conv2d(1,  32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+        )
+
+        # per-piece: (1, 5, 5) → (16, 5, 5), weight-shared
+        self.piece_encoder = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),
+            nn.ReLU(),
+        )
+
+        # fusion: (112, 8, 8) → 128-d
+        self.fusion = nn.Sequential(
+            nn.Conv2d(112, 64, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Flatten(),
             nn.Linear(4096, 128),
             nn.ReLU(),
         )
 
-        # weight-shared CNN for each of the 3 pieces: (1,5,5) → 32-d
-        self.piece_cnn = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=3, padding=1),   # (16, 5, 5)
-            nn.ReLU(),
-            nn.Flatten(),                                  # 400
-            nn.Linear(400, 32),
-            nn.ReLU(),
-        )
-
+        # shared FC after spatial fusion + pieces_left
         self.shared = nn.Sequential(
-            nn.Linear(227, 128),   # 128 (board) + 96 (3×32 pieces) + 3 (pieces_left)
+            nn.Linear(131, 128),   # 128 (fusion) + 3 (pieces_left)
             nn.ReLU(),
         )
 
-        self.actor  = nn.Linear(128, 192)   # logits for 192 actions
-        self.critic = nn.Linear(128, 1)     # state value
+        self.actor  = nn.Linear(128, 192)  # logits for 192 actions
+        self.critic = nn.Linear(128, 1)    # state value
+
+    def _encode_pieces(self, pieces: torch.Tensor) -> torch.Tensor:
+        """(B, 3, 5, 5) → (B, 48, 8, 8)"""
+        B = pieces.shape[0]
+        p = self.piece_encoder(pieces.view(B * 3, 1, 5, 5))  # (B*3, 16, 5, 5)
+        p = F.pad(p, (0, 3, 0, 3))                            # (B*3, 16, 8, 8)
+        return p.view(B, 48, 8, 8)
 
     def forward(self, board: torch.Tensor, pieces: torch.Tensor, pieces_left: torch.Tensor):
         """
@@ -154,9 +179,8 @@ class BlockBlastActorCritic(nn.Module):
             logits : (B, 192)
             value  : (B, 1)
         """
-        b_feat = self.board_cnn(board)                          # (B, 128)
-        B = pieces.shape[0]
-        p_feat = self.piece_cnn(pieces.view(B * 3, 1, 5, 5))    # (B*3, 32)
-        p_feat = p_feat.view(B, 96)                              # (B, 96)
-        x = self.shared(torch.cat([b_feat, p_feat, pieces_left], dim=1))  # (B, 128)
+        b = self.board_encoder(board)                          # (B, 64, 8, 8)
+        p = self._encode_pieces(pieces)                        # (B, 48, 8, 8)
+        x = self.fusion(torch.cat([b, p], dim=1))              # (B, 128)
+        x = self.shared(torch.cat([x, pieces_left], dim=1))   # (B, 128)
         return self.actor(x), self.critic(x)
