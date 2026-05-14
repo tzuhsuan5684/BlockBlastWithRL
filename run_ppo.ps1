@@ -49,7 +49,7 @@ function Write-Header([string]$msg) {
 }
 
 function Get-LatestCheckpoint([string]$reward) {
-    $files = Get-ChildItem -Path $CkptDir -Filter "ppo_${reward}_seed${Seed}_step*.pt" `
+    $files = Get-ChildItem -Path $CkptDir -Recurse -Filter "ppo_${reward}_seed${Seed}_step*.pt" `
                            -ErrorAction SilentlyContinue |
              Sort-Object { [int]($_.BaseName -replace '.*_step','') } -Descending
     if (-not $files) { return $null }
@@ -59,13 +59,17 @@ function Get-LatestCheckpoint([string]$reward) {
 # ---------------------------------------------------------------------------
 
 function Invoke-Train([string]$reward) {
+    $ts     = Get-Date -Format "yyyyMMdd_HHmmss"
+    $runDir = "$CkptDir\${reward}_seed${Seed}_${ts}"
     Write-Header "TRAIN  reward=$reward  steps=$TotalSteps  seed=$Seed"
+    Write-Host "  ckpt-dir: $runDir"
+    New-Item -ItemType Directory -Force -Path $runDir | Out-Null
     uv run python -m agents.ppo.train_ppo `
         --reward      $reward `
         --seed        $Seed `
         --total-steps $TotalSteps `
         --n-envs      $NEnvs `
-        --ckpt-dir    $CkptDir
+        --ckpt-dir    $runDir
     if ($LASTEXITCODE -ne 0) { throw "train_ppo failed (reward=$reward)" }
 }
 
