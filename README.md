@@ -181,9 +181,14 @@ env = BlockBlastEnv(reward_mode="dense")    # 密集版
 
 常數定義在 [reward_functions.py](reward_functions.py)，env 的 `_dense_shaping()` 已自動讀取。改係數只要動那個檔案即可，**不用碰 env**。
 
-**目前係數**: `HOLE_PENALTY = -0.02`, `BUMPINESS_PENALTY = -0.01`, `COMBO_STREAK_BONUS = 0.2`。
+**目前係數（v3）**: `HOLE_PENALTY = -0.04`, `BUMPINESS_PENALTY = -0.02`, `COMBO_STREAK_BONUS = 0.2`。
 
-> 📜 **歷程注記**: proposal §3.1 原案是 `-0.1 / -0.05`,但 v1 實際用了 `-0.3 / -0.1` 訓練,結果 PPO 的 critic `value_loss` 暴增到 ~150、policy 完全沒學起來。組員 C 診斷後降到 `-0.02 / -0.01`,PPO dense 分數從 1.89 跳到 4.22(+123%)。完整實驗紀錄見 [docs/ppo_journey.md](docs/ppo_journey.md)。
+> 📜 **歷程注記**:
+> - proposal §3.1 原案 `-0.1 / -0.05`，v1 實際跑 `-0.3 / -0.1` → PPO `value_loss` 暴增到 ~150、policy 完全沒學起來。
+> - v2 降到 `-0.02 / -0.01` → dense PPO 分數從 1.89 跳到 4.22（+123%），但 1M step 仍未收斂，shaping 訊號偏弱。
+> - **v3（目前）** 加倍到 `-0.04 / -0.02` → 每步 shaping 仍遠小於 +1 line-clear，但推往「平整、無洞」的梯度更強。若 `value_loss > 5` 或 `ep_score_mean` 低於 v2 的 4.22 就 revert。
+>
+> 完整實驗紀錄見 [docs/ppo_journey.md](docs/ppo_journey.md)。
 
 ---
 
@@ -212,23 +217,31 @@ for step in range(500_000):
 
 ## 8. PPO 訓練
 
-### 方式 A：PowerShell 一鍵腳本（推薦 Windows）
+### 方式 A：`run_ppo.py` 一鍵腳本（推薦，跨平台）
 
-```powershell
-# 預設：dense reward，500k steps，train + eval
-.\run_ppo.ps1
+```bash
+# 預設：dense reward，1M steps，train + eval
+uv run python run_ppo.py
 
 # 指定 reward / steps
-.\run_ppo.ps1 -Mode train -Reward sparse
-.\run_ppo.ps1 -Mode train -Reward both     # sparse + dense 都跑
-.\run_ppo.ps1 -Mode all   -TotalSteps 1000000
+uv run python run_ppo.py train --reward sparse
+uv run python run_ppo.py train --reward both              # sparse + dense 都跑
+uv run python run_ppo.py all   --total-steps 500000
 
 # 只做 eval（自動找最新 checkpoint）
-.\run_ppo.ps1 -Mode eval  -Reward dense
+uv run python run_ppo.py eval  --reward dense
 
-# 開 pygame demo
-.\run_ppo.ps1 -Mode demo
+# 指定特定 checkpoint 評估
+uv run python run_ppo.py eval  --checkpoint checkpoints/dense_seed0_20260514_175643/ppo_dense_seed0_step1000000.pt
+
+# 開 pygame demo（自動找最新 checkpoint，dense 優先）
+uv run python run_ppo.py demo
 ```
+
+腳本會自動：
+- 為每次 `train` 建立帶時間戳的 `checkpoints/<reward>_seed<seed>_<YYYYMMDD_HHMMSS>/` 子目錄，避免覆蓋舊跑次。
+- 把 TensorBoard log 對齊到同一個時間戳（`runs/ppo_<reward>_seed<S>/<YYYYMMDD_HHMMSS>/`），方便配對。
+- `eval` 產出 `results/ppo_<reward>_seed<S>_<時間戳>.json`。
 
 ### 方式 B：直接 uv 指令
 
@@ -244,12 +257,12 @@ uv run python -m agents.ppo.train_ppo --reward dense  --seed 0
 
 | 參數 | 值 | 備註 |
 |------|----|----|
-| `--total-steps`   | 500_000 | proposal 規定 |
+| `--total-steps`   | 1_000_000 | dense 在 1M 才接近收斂；sparse ~700k 就 plateau |
 | `--n-envs`        | 8 | 平行 env 數，SubprocVecEnv |
 | `--n-steps`       | 128 | 每個 env 每次 rollout 步數 → 一次 update 用 1024 transitions |
 | `--n-epochs`      | 10 | 每次 rollout 重複跑 10 個 epoch |
 | `--batch-size`    | 64 | mini-batch |
-| `--lr`            | 3e-4 | |
+| `--lr`            | 3e-4 | **Linear decay → 0**（對齊 SB3 預設 schedule） |
 | `--gamma`         | 0.99 | |
 | `--gae-lambda`    | 0.95 | |
 | `--clip-range`    | 0.2 | PPO ratio 截斷範圍 |
@@ -258,11 +271,11 @@ uv run python -m agents.ppo.train_ppo --reward dense  --seed 0
 | `--max-grad-norm` | 0.5 | gradient clipping |
 | `--ckpt-every`    | 50_000 | checkpoint 間隔（env steps） |
 
-> 預設值刻意對齊 SB3 MaskablePPO 預設，理由：「PPO 沒調好」這種質疑可以擋掉一輪。
+> 預設值刻意對齊 SB3 MaskablePPO 預設，理由：「PPO 沒調好」這種質疑可以擋掉一輪。LR 用線性衰減（v3 起）讓後期 fine-tune 更穩。
 
 訓練輸出：
-- `checkpoints/ppo_<reward>_seed<S>_step<N>.pt` — 每 50k steps 一次
-- `runs/ppo_<reward>_seed<S>/` — TensorBoard event files
+- `checkpoints/<reward>_seed<S>_<時間戳>/ppo_<reward>_seed<S>_step<N>.pt` — 每 50k steps 一次
+- `runs/ppo_<reward>_seed<S>/<時間戳>/` — TensorBoard event files（含新增的 `train/lr` 曲線）
 
 ---
 
@@ -289,23 +302,25 @@ uv run tensorboard --logdir runs
 
 ## 10. 產生評估 JSON（交給組員 E）
 
-實測 sparse 在 ~700k 就 plateau，dense 在 1M 仍有上升；預設 500k 起跳，要更高分用 `--total-steps 1000000`。
+實測 sparse 在 ~700k 就 plateau，dense 在 1M 仍有上升；預設 1M，較短跑可用 `--total-steps 500000`。
+
+通常直接用 `run_ppo.py eval` 即可（自動找最新 checkpoint、自動命名輸出），手動跑：
 
 ```bash
 uv run python -m agents.ppo.evaluate \
-    --checkpoint checkpoints/ppo_sparse_seed0_step1000000.pt \
+    --checkpoint checkpoints/sparse_seed0_<時間戳>/ppo_sparse_seed0_step1000000.pt \
     --reward sparse --episodes 100 --seed 42 \
     --out results/ppo_sparse.json \
-    --notes "PPO 1M steps, lr=3e-4, ent_coef=0.01, shared backbone with DQN"
+    --notes "PPO 1M steps, lr=3e-4 linear→0, ent_coef=0.01, shared backbone with DQN"
 
 uv run python -m agents.ppo.evaluate \
-    --checkpoint checkpoints/ppo_dense_seed0_step1000000.pt \
+    --checkpoint checkpoints/dense_seed0_<時間戳>/ppo_dense_seed0_step1000000.pt \
     --reward dense --episodes 100 --seed 42 \
     --out results/ppo_dense.json \
-    --notes "PPO 1M steps, dense reward (HOLE_PENALTY=-0.02, BUMPINESS_PENALTY=-0.01)"
+    --notes "PPO 1M steps, dense v3 (HOLE_PENALTY=-0.04, BUMPINESS_PENALTY=-0.02)"
 ```
 
-產生 `results/ppo_sparse.json` 和 `results/ppo_dense.json`，**這兩個檔要 commit**，組員 E 會從 git 收集所有人的 JSON 畫對比圖。
+產生 `results/ppo_*.json`，**這些檔要 commit**，組員 E 會從 git 收集所有人的 JSON 畫對比圖。
 
 JSON schema（11 欄，組員 E 訂）：
 
@@ -386,8 +401,8 @@ buffer.push(obs, action, reward, next_obs, terminated,
 
 ```python
 # reward_functions.py（D 動這裡就好）
-HOLE_PENALTY      = -0.02   # 目前值
-BUMPINESS_PENALTY = -0.01   # 目前值
+HOLE_PENALTY      = -0.04   # v3 目前值（v2 為 -0.02）
+BUMPINESS_PENALTY = -0.02   # v3 目前值（v2 為 -0.01）
 COMBO_STREAK_BONUS = 0.2    # 連續消除加成係數
 ```
 
@@ -492,7 +507,7 @@ uv run python demo/play.py
 uv run python demo/play.py --agent random
 
 # ★ 跑訓練好的 PPO checkpoint
-uv run python demo/play.py --agent ppo --checkpoint checkpoints/ppo_sparse_seed0_step500000.pt
+uv run python demo/play.py --agent ppo --checkpoint checkpoints/dense_seed0_<時間戳>/ppo_dense_seed0_step1000000.pt
 
 # 慢速，每秒 1 步
 uv run python demo/play.py --fps 1
@@ -504,7 +519,7 @@ uv run python demo/play.py --fps 0
 uv run python demo/play.py --episodes 5
 ```
 
-也可以用 `run_ppo.ps1 -Mode demo` 自動找最新 checkpoint 開啟。
+也可以用 `uv run python run_ppo.py demo` 自動找最新 checkpoint 開啟。
 
 PPO 模式採 **deterministic argmax**（masked logits），跟 `evaluate.py` 產 JSON 的決策方式一致。
 
@@ -584,7 +599,7 @@ BlockBlastWithRL/
 │   └── improvement_options.md    # 進一步突破分數的方案討論
 ├── results/                      # 各人交給組員 E 的 JSON（commit 進 git）
 ├── reward_functions.py           # 組員 D 修改（env 自動讀取）
-├── run_ppo.ps1                   # Windows PowerShell 一鍵訓練/評估/demo 腳本
+├── run_ppo.py                    # 跨平台一鍵訓練/評估/demo 腳本（subprocess 包 train_ppo + evaluate + play）
 ├── test_env.py                   # 環境驗證，push 前必跑
 ├── README.md                     # 本文件
 ├── CLAUDE.md                     # 給 Claude Code 用的 repo 導覽
