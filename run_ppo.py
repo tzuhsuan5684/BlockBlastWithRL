@@ -37,7 +37,7 @@ def latest_checkpoint(reward: str, seed: int) -> Path | None:
     pattern = f"ppo_{reward}_seed{seed}_step*.pt"
     candidates = sorted(
         CKPT_DIR.rglob(pattern),
-        key=lambda p: int(p.stem.split("_step")[-1]),
+        key=lambda p: (int(p.stem.split("_step")[-1]), p.stat().st_mtime),
         reverse=True,
     )
     return candidates[0] if candidates else None
@@ -100,7 +100,7 @@ def main():
                         choices=["train", "eval", "demo", "all"])
     parser.add_argument("--reward",      default="dense", choices=["sparse", "dense", "both"])
     parser.add_argument("--seed",        type=int, default=0)
-    parser.add_argument("--total-steps", type=int, default=500_000)
+    parser.add_argument("--total-steps", type=int, default=1_000_000)
     parser.add_argument("--n-episodes",  type=int, default=100)
     parser.add_argument("--n-envs",      type=int, default=8)
     parser.add_argument("--checkpoint",  default="")
