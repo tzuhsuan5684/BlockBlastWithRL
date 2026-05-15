@@ -105,7 +105,7 @@ class DQNAgent:
 
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=10.0)
+        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=1.0)
         self.optimizer.step()
 
         return loss.item()
@@ -113,6 +113,11 @@ class DQNAgent:
     def update_target(self):
         """Hard copy q_net weights → target_net."""
         self.target_net.load_state_dict(self.q_net.state_dict())
+
+    def soft_update_target(self, tau: float = 0.005):
+        """Polyak averaging: target = tau * q_net + (1-tau) * target_net."""
+        for t_param, q_param in zip(self.target_net.parameters(), self.q_net.parameters()):
+            t_param.data.copy_(tau * q_param.data + (1.0 - tau) * t_param.data)
 
     # ------------------------------------------------------------------
     # Checkpoint

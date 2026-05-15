@@ -26,14 +26,15 @@ from agents.network import obs_to_tensor
 # ------------------------------------------------------------------
 TOTAL_STEPS      = 500_000   # total env steps across all envs
 N_ENVS           = 4         # environments running in parallel → batched GPU forward pass
-BUFFER_SIZE      = 100_000   # larger buffer for N_ENVS diverse experience
+BUFFER_SIZE      = 500_000   # large buffer for diverse experience
 BATCH_SIZE       = 256       # larger batch → better GPU throughput per update
 LR               = 1e-4
 GAMMA            = 0.99
 EPS_START        = 1.0
 EPS_END          = 0.05
-EPS_DECAY_STEPS  = 200_000   # ε linearly drops from 1.0 → 0.05 over first 200k env steps
-TARGET_UPDATE_FREQ = 1_000   # hard-copy q_net → target_net every N env steps
+EPS_DECAY_STEPS  = 400_000   # ε linearly drops from 1.0 → 0.05 over first 400k env steps
+SOFT_UPDATE_TAU  = 0.005     # polyak coefficient for soft target update (every iteration)
+N_UPDATES_PER_ITER = 2       # gradient updates per iteration → 2:1 update:env-step ratio
 LEARNING_START   = 2_000     # don't update until buffer has this many transitions
 CKPT_EVERY       = 50_000    # save checkpoint every N env steps
 LOG_EVERY        = 1_000     # log scalars to TensorBoard every N env steps
@@ -139,10 +140,13 @@ def train(reward_mode: str = "sparse", seed: int = 0, total_steps: int = TOTAL_S
                 obs_list[i]  = next_obs
                 mask_list[i] = next_mask
 
-        # ── Learning: one gradient update per iteration (batch 256 = 4× original 64) ──
+        # ── Learning: N_UPDATES_PER_ITER gradient updates per iteration (1:1 ratio) ──
         if len(buffer) >= LEARNING_START:
-            batch = buffer.sample(BATCH_SIZE)
-            loss  = agent.update(batch)
+            loss = 0.0
+            for _ in range(N_UPDATES_PER_ITER):
+                batch = buffer.sample(BATCH_SIZE)
+                loss  = agent.update(batch)
+            agent.soft_update_target(SOFT_UPDATE_TAU)
 
             if global_step % LOG_EVERY == 0:
                 writer.add_scalar("train/loss",    loss,    global_step)
@@ -150,9 +154,6 @@ def train(reward_mode: str = "sparse", seed: int = 0, total_steps: int = TOTAL_S
                 if recent_scores:
                     writer.add_scalar("rollout/ep_score_mean",
                                       np.mean(recent_scores[-50:]), global_step)
-
-        if global_step % TARGET_UPDATE_FREQ == 0:
-            agent.update_target()
 
         if global_step % CKPT_EVERY == 0:
             ckpt_path = ckpt_dir / f"dqn_{reward_mode}_seed{seed}_step{global_step}.pt"
