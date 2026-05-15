@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -20,6 +21,18 @@ from pathlib import Path
 
 CKPT_DIR    = Path("checkpoints")
 RESULTS_DIR = Path("results")
+
+RUN_ID_RE = re.compile(r"(\d{8}_\d{6})$")
+
+
+def _run_id_from_ckpt(ckpt: Path) -> str:
+    """Pull the YYYYMMDD_HHMMSS suffix off the checkpoint's parent dir.
+
+    Falls back to "now" only if a checkpoint outside the run-dir convention is
+    passed explicitly via --checkpoint.
+    """
+    m = RUN_ID_RE.search(ckpt.parent.name)
+    return m.group(1) if m else datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def run(cmd: list[str]):
@@ -67,8 +80,8 @@ def eval_(reward: str, seed: int, n_episodes: int, total_steps: int, checkpoint:
         return
     print(f"  checkpoint: {ckpt}")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = RESULTS_DIR / f"ppo_{reward}_seed{seed}_{ts}.json"
+    run_id = _run_id_from_ckpt(ckpt)
+    out = RESULTS_DIR / f"ppo_{reward}_seed{seed}_{run_id}.json"
     run([
         "uv", "run", "python", "-m", "agents.ppo.evaluate",
         "--checkpoint", str(ckpt),
