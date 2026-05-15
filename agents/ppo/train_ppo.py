@@ -12,6 +12,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import re
 import time
 from collections import deque
 from functools import partial
@@ -38,7 +39,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--reward",      type=str, default="sparse", choices=["sparse", "dense"])
     p.add_argument("--seed",        type=int, default=0)
-    p.add_argument("--total-steps", type=int, default=500_000)
+    p.add_argument("--total-steps", type=int, default=1_000_000)
     p.add_argument("--n-envs",      type=int, default=8)
     p.add_argument("--n-steps",     type=int, default=128)
     p.add_argument("--batch-size",  type=int, default=64)
@@ -60,7 +61,10 @@ def parse_args():
 def train(args):
     tag = f"ppo_{args.reward}_seed{args.seed}"
     ckpt_dir = Path(args.ckpt_dir); ckpt_dir.mkdir(parents=True, exist_ok=True)
-    run_id   = time.strftime("%Y%m%d_%H%M%S")
+    # If ckpt-dir was created by run_ppo.py its basename ends with YYYYMMDD_HHMMSS;
+    # reuse that so the TensorBoard run lines up with the checkpoint folder.
+    m = re.search(r"(\d{8}_\d{6})$", ckpt_dir.name)
+    run_id   = m.group(1) if m else time.strftime("%Y%m%d_%H%M%S")
     log_dir  = Path(args.log_dir) / tag / run_id; log_dir.mkdir(parents=True, exist_ok=True)
 
     np.random.seed(args.seed)
@@ -130,12 +134,17 @@ def train(args):
         # --- GAE + PPO update ---
         last_values = agent.predict_values(obs, masks)
         buffer.compute_returns_and_advantages(last_values, dones)
+        # linear LR decay: 3e-4 → 0 over total_steps (matches SB3 default schedule)
+        progress = total_steps / args.total_steps
+        current_lr = args.lr * (1.0 - progress)
+        agent.set_lr(current_lr)
         stats = agent.update(buffer)
         buffer.reset()
 
         # --- TensorBoard logging ---
         fps = int(total_steps / (time.time() - t0))
         writer.add_scalar("time/fps", fps, total_steps)
+        writer.add_scalar("train/lr",            current_lr,             total_steps)
         writer.add_scalar("train/policy_loss",   stats["policy_loss"],   total_steps)
         writer.add_scalar("train/value_loss",    stats["value_loss"],    total_steps)
         writer.add_scalar("train/entropy",       stats["entropy"],       total_steps)

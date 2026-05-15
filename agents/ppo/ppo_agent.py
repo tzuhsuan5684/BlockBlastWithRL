@@ -169,6 +169,10 @@ class PPOAgent:
             path,
         )
 
+    def set_lr(self, lr: float) -> None:
+        for pg in self.optimizer.param_groups:
+            pg["lr"] = lr
+
     def load(self, path: str, load_optimizer: bool = True) -> dict:
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(ckpt["model_state_dict"])
