@@ -7,6 +7,7 @@ from reward_functions import HOLE_PENALTY, BUMPINESS_PENALTY, COMBO_STREAK_BONUS
 BOARD_SIZE = 8
 N_PIECES = 3          # pieces per round
 N_ACTIONS = N_PIECES * BOARD_SIZE * BOARD_SIZE   # 3 × 64 = 192
+HEURISTIC_DIM = 40    # heights(8) + holes_per_col(8) + row_fill(8) + col_fill(8) + bumpiness(7) + n_legal(1)
 
 
 class BlockBlastEnv(gym.Env):
@@ -18,6 +19,17 @@ class BlockBlastEnv(gym.Env):
         pieces      : float32 (3, 5, 5) – each piece rendered in a 5×5 grid;
                                           all-zeros when that slot is already used
         pieces_left : float32 (3,)      – binary mask; 1 if slot still has a piece
+        heuristics  : float32 (40,)     – Tier-1 hand-crafted features, all
+                                          normalized to [0, 1]. Layout:
+                                            [0:8]    column heights / 8
+                                            [8:16]   holes per column / 7
+                                            [16:24]  row fill counts / 8
+                                            [24:32]  col fill counts / 8
+                                            [32:39]  bumpiness (|h[i]-h[i+1]|) / 8
+                                            [39:40]  n_legal_actions / 192
+                                          DQN (Member B) can ignore this key —
+                                          existing consumers reading only
+                                          board/pieces/pieces_left are unaffected.
 
     Action (Discrete 192):
         action = piece_idx * 64 + row * 8 + col
@@ -45,6 +57,7 @@ class BlockBlastEnv(gym.Env):
             "board":       spaces.Box(0.0, 1.0, (BOARD_SIZE, BOARD_SIZE), dtype=np.float32),
             "pieces":      spaces.Box(0.0, 1.0, (N_PIECES, 5, 5),         dtype=np.float32),
             "pieces_left": spaces.Box(0.0, 1.0, (N_PIECES,),              dtype=np.float32),
+            "heuristics":  spaces.Box(0.0, 1.0, (HEURISTIC_DIM,),         dtype=np.float32),
         })
         self.action_space = spaces.Discrete(N_ACTIONS)
 
@@ -215,7 +228,57 @@ class BlockBlastEnv(gym.Env):
             if pid != -1:
                 pieces_grid[i] = shape_to_grid(SHAPES[pid])
                 pieces_left[i] = 1.0
-        return {"board": self.board.copy(), "pieces": pieces_grid, "pieces_left": pieces_left}
+        return {
+            "board":       self.board.copy(),
+            "pieces":      pieces_grid,
+            "pieces_left": pieces_left,
+            "heuristics":  self._compute_heuristics(),
+        }
+
+    # ------------------------------------------------------------------
+    # Tier-1 heuristic features (all normalized to [0, 1])
+    # ------------------------------------------------------------------
+
+    def _column_heights(self) -> np.ndarray:
+        """(8,) int — height of each column measured from the bottom (0 = empty)."""
+        heights = np.zeros(BOARD_SIZE, dtype=np.int32)
+        for col in range(BOARD_SIZE):
+            filled = np.where(self.board[:, col] == 1.0)[0]
+            heights[col] = BOARD_SIZE - int(filled[0]) if len(filled) > 0 else 0
+        return heights
+
+    def _holes_per_col(self) -> np.ndarray:
+        """(8,) int — empty cells below the topmost filled cell, per column."""
+        holes = np.zeros(BOARD_SIZE, dtype=np.int32)
+        for col in range(BOARD_SIZE):
+            found_block = False
+            n = 0
+            for row in range(BOARD_SIZE):
+                if self.board[row, col] == 1.0:
+                    found_block = True
+                elif found_block:
+                    n += 1
+            holes[col] = n
+        return holes
+
+    def _compute_heuristics(self) -> np.ndarray:
+        """Concatenate Tier-1 features into a (40,) float32 vector in [0, 1]."""
+        heights = self._column_heights().astype(np.float32)
+        holes_c = self._holes_per_col().astype(np.float32)
+        row_fill = self.board.sum(axis=1).astype(np.float32)   # (8,)
+        col_fill = self.board.sum(axis=0).astype(np.float32)   # (8,)
+        bump = np.abs(np.diff(heights)).astype(np.float32)     # (7,)
+        n_legal = float(np.count_nonzero(self.action_masks()))
+
+        out = np.concatenate([
+            heights  / BOARD_SIZE,
+            holes_c  / max(BOARD_SIZE - 1, 1),
+            row_fill / BOARD_SIZE,
+            col_fill / BOARD_SIZE,
+            bump     / BOARD_SIZE,
+            np.array([n_legal / N_ACTIONS], dtype=np.float32),
+        ]).astype(np.float32)
+        return np.clip(out, 0.0, 1.0)
 
     def _dense_shaping(self) -> float:
         return HOLE_PENALTY * self._count_holes() + BUMPINESS_PENALTY * self._count_bumpiness()

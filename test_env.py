@@ -6,6 +6,7 @@ Run with:  python test_env.py
 import sys
 import numpy as np
 from env import BlockBlastEnv, N_ACTIONS, BOARD_SIZE, N_PIECES, N_SHAPES
+from env.block_blast_env import HEURISTIC_DIM
 
 def test_basic():
     print("=== Basic environment test ===")
@@ -14,6 +15,10 @@ def test_basic():
 
     assert obs["board"].shape   == (BOARD_SIZE, BOARD_SIZE), "board shape error"
     assert obs["pieces"].shape  == (N_PIECES, 5, 5),         "pieces shape error"
+    assert obs["heuristics"].shape == (HEURISTIC_DIM,),      "heuristics shape error"
+    assert obs["heuristics"].dtype == np.float32,            "heuristics dtype error"
+    assert (obs["heuristics"] >= 0.0).all() and (obs["heuristics"] <= 1.0).all(), \
+        "heuristics out of [0,1]"
     assert info["action_mask"].shape == (N_ACTIONS,),        "mask shape error"
     assert info["action_mask"].any(),                        "no legal actions at start"
     print("  observation spaces: OK")
@@ -98,10 +103,45 @@ def test_action_mask_consistency():
     print("  Mask consistency: PASSED\n")
 
 
+def test_heuristics():
+    print("=== Heuristic features test ===")
+    env = BlockBlastEnv()
+    env.reset(seed=0)
+
+    # Construct a known board:
+    #   col 0 filled rows 6,7 → height 2, 0 holes
+    #   col 1 filled rows 5,7 → height 3, 1 hole (row 6 below the top of col 1)
+    #   col 2 empty             → height 0, 0 holes
+    env.board[:] = 0.0
+    env.board[6, 0] = 1.0; env.board[7, 0] = 1.0
+    env.board[5, 1] = 1.0; env.board[7, 1] = 1.0
+    h = env._compute_heuristics()
+
+    heights = (h[0:8] * BOARD_SIZE).round().astype(int)
+    holes   = (h[8:16] * (BOARD_SIZE - 1)).round().astype(int)
+    row_fill = (h[16:24] * BOARD_SIZE).round().astype(int)
+    col_fill = (h[24:32] * BOARD_SIZE).round().astype(int)
+    bump = (h[32:39] * BOARD_SIZE).round().astype(int)
+    n_legal_frac = float(h[39])
+
+    assert heights[0] == 2 and heights[1] == 3 and heights[2] == 0, f"heights wrong: {heights}"
+    assert holes[1] == 1 and holes[0] == 0 and holes[2] == 0,       f"holes wrong: {holes}"
+    assert col_fill[0] == 2 and col_fill[1] == 2 and col_fill[2] == 0, f"col_fill wrong: {col_fill}"
+    assert row_fill[7] == 2 and row_fill[6] == 1 and row_fill[5] == 1, f"row_fill wrong: {row_fill}"
+    # bumpiness: |2-3|=1, |3-0|=3, |0-0|=0...
+    assert bump[0] == 1 and bump[1] == 3, f"bumpiness wrong: {bump}"
+    assert 0.0 <= n_legal_frac <= 1.0
+    assert (h >= 0.0).all() and (h <= 1.0).all(), "heuristics out of [0,1]"
+    print(f"  heights[0..3]={heights[:3].tolist()}, holes[0..3]={holes[:3].tolist()}, "
+          f"n_legal_frac={n_legal_frac:.3f}")
+    print("  Heuristic test: PASSED\n")
+
+
 if __name__ == "__main__":
     np.random.seed(0)
     test_basic()
     test_line_clear()
     test_dense_reward()
     test_action_mask_consistency()
+    test_heuristics()
     print("All tests passed!")
