@@ -24,6 +24,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from torch.utils.tensorboard import SummaryWriter
 
 from env import BlockBlastEnv
+from env.block_blast_env import HEURISTIC_DIM
 from agents.ppo.ppo_agent import PPOAgent
 from agents.ppo.rollout_buffer import RolloutBuffer
 
@@ -51,6 +52,9 @@ def parse_args():
     p.add_argument("--ent-coef",      type=float, default=0.01)
     p.add_argument("--vf-coef",       type=float, default=0.5)
     p.add_argument("--max-grad-norm", type=float, default=0.5)
+    p.add_argument("--use-heuristics", action="store_true",
+                   help="feed Tier-1 heuristic features (40-d) into the actor-critic; "
+                        "enables BlockBlastActorCriticH instead of the base network")
     p.add_argument("--ckpt-dir",  type=str, default="checkpoints")
     p.add_argument("--log-dir",   type=str, default="runs")
     p.add_argument("--ckpt-every", type=int, default=50_000,
@@ -59,7 +63,7 @@ def parse_args():
 
 
 def train(args):
-    tag = f"ppo_{args.reward}_seed{args.seed}"
+    tag = f"ppo_{args.reward}{'_h' if args.use_heuristics else ''}_seed{args.seed}"
     ckpt_dir = Path(args.ckpt_dir); ckpt_dir.mkdir(parents=True, exist_ok=True)
     # If ckpt-dir was created by run_ppo.py its basename ends with YYYYMMDD_HHMMSS;
     # reuse that so the TensorBoard run lines up with the checkpoint folder.
@@ -81,10 +85,12 @@ def train(args):
         ent_coef=args.ent_coef, vf_coef=args.vf_coef,
         max_grad_norm=args.max_grad_norm,
         n_epochs=args.n_epochs, batch_size=args.batch_size,
+        use_heuristics=args.use_heuristics,
         device=device,
     )
     buffer = RolloutBuffer(
         n_steps=args.n_steps, n_envs=args.n_envs,
+        heuristic_dim=HEURISTIC_DIM if args.use_heuristics else 0,
         gamma=args.gamma, gae_lambda=args.gae_lambda,
     )
     writer = SummaryWriter(log_dir=str(log_dir))

@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 
 from agents.network import BlockBlastActorCritic
+from .network_heuristic import BlockBlastActorCriticH
 from .rollout_buffer import RolloutBuffer
 
 
@@ -28,10 +29,15 @@ class PPOAgent:
         max_grad_norm: float = 0.5,
         n_epochs: int = 10,
         batch_size: int = 64,
+        use_heuristics: bool = False,
         device: torch.device | str = "cuda",
     ):
         self.device = torch.device(device)
-        self.model = BlockBlastActorCritic().to(self.device)
+        self.use_heuristics = use_heuristics
+        if use_heuristics:
+            self.model = BlockBlastActorCriticH().to(self.device)
+        else:
+            self.model = BlockBlastActorCritic().to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
         self.clip_range = clip_range
@@ -50,17 +56,28 @@ class PPOAgent:
         """VecEnv obs (numpy) → torch tensors on device.
 
         board comes in as (N, 8, 8); BlockBlastActorCritic expects (N, 1, 8, 8).
+        Returns heuristics as None when the agent is not configured to use them.
         """
         board       = torch.from_numpy(obs["board"]).to(self.device).unsqueeze(1)
         pieces      = torch.from_numpy(obs["pieces"]).to(self.device)
         pieces_left = torch.from_numpy(obs["pieces_left"]).to(self.device)
+        heuristics  = (torch.from_numpy(obs["heuristics"]).to(self.device)
+                       if self.use_heuristics else None)
         mask        = torch.from_numpy(action_mask).to(self.device)
-        return board, pieces, pieces_left, mask
+        return board, pieces, pieces_left, heuristics, mask
+
+    def _forward(self, board: torch.Tensor, pieces: torch.Tensor,
+                 pieces_left: torch.Tensor, heuristics: torch.Tensor | None):
+        """Forward pass dispatching on whether heuristics are wired in."""
+        if self.use_heuristics:
+            return self.model(board, pieces, pieces_left, heuristics)
+        return self.model(board, pieces, pieces_left)
 
     def _masked_dist_and_value(self, board: torch.Tensor, pieces: torch.Tensor,
-                                pieces_left: torch.Tensor, mask: torch.Tensor):
+                                pieces_left: torch.Tensor, heuristics: torch.Tensor | None,
+                                mask: torch.Tensor):
         """Forward pass + apply mask → (Categorical, value)."""
-        logits, value = self.model(board, pieces, pieces_left)
+        logits, value = self._forward(board, pieces, pieces_left, heuristics)
         logits = logits.masked_fill(~mask, float("-inf"))
         return Categorical(logits=logits), value.squeeze(-1)
 
@@ -74,8 +91,8 @@ class PPOAgent:
 
         Returns numpy arrays so they can go straight into the env and buffer.
         """
-        board, pieces, pieces_left, mask = self._to_torch(obs, action_mask)
-        dist, value = self._masked_dist_and_value(board, pieces, pieces_left, mask)
+        board, pieces, pieces_left, heuristics, mask = self._to_torch(obs, action_mask)
+        dist, value = self._masked_dist_and_value(board, pieces, pieces_left, heuristics, mask)
         action = dist.sample()
         log_prob = dist.log_prob(action)
         return (
@@ -87,8 +104,8 @@ class PPOAgent:
     @torch.no_grad()
     def predict_values(self, obs: dict, action_mask: np.ndarray) -> np.ndarray:
         """V(s) for bootstrapping the final step of a rollout."""
-        board, pieces, pieces_left, mask = self._to_torch(obs, action_mask)
-        _, value = self._masked_dist_and_value(board, pieces, pieces_left, mask)
+        board, pieces, pieces_left, heuristics, mask = self._to_torch(obs, action_mask)
+        _, value = self._masked_dist_and_value(board, pieces, pieces_left, heuristics, mask)
         return value.cpu().numpy()
 
     # ------------------------------------------------------------------
@@ -102,7 +119,10 @@ class PPOAgent:
         for _ in range(self.n_epochs):
             for batch in buffer.get(self.batch_size, self.device):
                 board = batch.boards.unsqueeze(1)  # (B, 1, 8, 8)
-                logits, value = self.model(board, batch.pieces, batch.pieces_left)
+                if self.use_heuristics:
+                    logits, value = self.model(board, batch.pieces, batch.pieces_left, batch.heuristics)
+                else:
+                    logits, value = self.model(board, batch.pieces, batch.pieces_left)
                 value = value.squeeze(-1)
 
                 logits = logits.masked_fill(~batch.action_masks, float("-inf"))
@@ -165,6 +185,7 @@ class PPOAgent:
         torch.save(
             {"model_state_dict": self.model.state_dict(),
              "optimizer_state_dict": self.optimizer.state_dict(),
+             "use_heuristics": self.use_heuristics,
              **extra},
             path,
         )
