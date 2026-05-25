@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-VALID_AGENTS = ("Random", "Greedy", "DQN", "PPO")
+VALID_AGENTS = ("Random", "Greedy", "DQN", "PPO", "PPO-AF")
 VALID_REWARD_MODES = ("sparse", "dense")
 REQUIRED_FIELDS = (
     "agent", "reward_mode", "n_episodes", "seed",
