@@ -37,6 +37,8 @@ import torch
 from env import BlockBlastEnv
 from agents.network import BlockBlastActorCritic
 from agents.ppo.network_heuristic import BlockBlastActorCriticH
+from agents.ppo.network_afterstate import BlockBlastAfterstateActorCritic
+from agents.ppo.afterstate import compute_afterstate_features
 
 
 def _obs_to_torch(obs: dict, device: torch.device, use_heuristics: bool):
@@ -61,7 +63,13 @@ def evaluate(
 
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     use_heuristics = bool(ckpt.get("use_heuristics", False))
-    model = (BlockBlastActorCriticH() if use_heuristics else BlockBlastActorCritic()).to(device)
+    use_afterstate = bool(ckpt.get("use_afterstate", False))
+    if use_afterstate:
+        model = BlockBlastAfterstateActorCritic().to(device)
+    elif use_heuristics:
+        model = BlockBlastActorCriticH().to(device)
+    else:
+        model = BlockBlastActorCritic().to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
@@ -74,11 +82,17 @@ def evaluate(
         mask = info["action_mask"]
         steps = 0
         while True:
-            board, pieces, pieces_left, heuristics = _obs_to_torch(obs, device, use_heuristics)
-            if use_heuristics:
-                logits, _ = model(board, pieces, pieces_left, heuristics)
+            if use_afterstate:
+                af = compute_afterstate_features(obs["board"], env.piece_shape_ids, mask)
+                af_t = torch.from_numpy(af).to(device).unsqueeze(0)            # (1, 192, F)
+                heur_t = torch.from_numpy(obs["heuristics"]).to(device).unsqueeze(0)  # (1, 40)
+                logits, _ = model(af_t, heur_t)
             else:
-                logits, _ = model(board, pieces, pieces_left)
+                board, pieces, pieces_left, heuristics = _obs_to_torch(obs, device, use_heuristics)
+                if use_heuristics:
+                    logits, _ = model(board, pieces, pieces_left, heuristics)
+                else:
+                    logits, _ = model(board, pieces, pieces_left)
             mask_t = torch.from_numpy(mask).to(device).unsqueeze(0)
             logits = logits.masked_fill(~mask_t, float("-inf"))
             action = int(logits.argmax(dim=1).item())

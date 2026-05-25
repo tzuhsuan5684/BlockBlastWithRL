@@ -16,6 +16,7 @@ from torch.distributions import Categorical
 
 from agents.network import BlockBlastActorCritic
 from .network_heuristic import BlockBlastActorCriticH
+from .network_afterstate import BlockBlastAfterstateActorCritic
 from .rollout_buffer import RolloutBuffer
 
 
@@ -30,11 +31,17 @@ class PPOAgent:
         n_epochs: int = 10,
         batch_size: int = 64,
         use_heuristics: bool = False,
+        use_afterstate: bool = False,
         device: torch.device | str = "cuda",
     ):
+        assert not (use_heuristics and use_afterstate), \
+            "use_heuristics and use_afterstate are mutually exclusive networks"
         self.device = torch.device(device)
         self.use_heuristics = use_heuristics
-        if use_heuristics:
+        self.use_afterstate = use_afterstate
+        if use_afterstate:
+            self.model = BlockBlastAfterstateActorCritic().to(self.device)
+        elif use_heuristics:
             self.model = BlockBlastActorCriticH().to(self.device)
         else:
             self.model = BlockBlastActorCritic().to(self.device)
@@ -86,13 +93,24 @@ class PPOAgent:
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def select_action(self, obs: dict, action_mask: np.ndarray):
+    def select_action(self, obs: dict, action_mask: np.ndarray,
+                      afterstate_features: np.ndarray | None = None):
         """Sample action stochastically for rollout collection.
 
-        Returns numpy arrays so they can go straight into the env and buffer.
+        afterstate_features is required iff use_afterstate is set; in that mode
+        the actor scores each action's afterstate and ignores board/pieces.
         """
-        board, pieces, pieces_left, heuristics, mask = self._to_torch(obs, action_mask)
-        dist, value = self._masked_dist_and_value(board, pieces, pieces_left, heuristics, mask)
+        if self.use_afterstate:
+            af = torch.from_numpy(afterstate_features).to(self.device)
+            heur = torch.from_numpy(obs["heuristics"]).to(self.device)
+            mask = torch.from_numpy(action_mask).to(self.device)
+            logits, value = self.model(af, heur)
+            logits = logits.masked_fill(~mask, float("-inf"))
+            dist = Categorical(logits=logits)
+            value = value.squeeze(-1)
+        else:
+            board, pieces, pieces_left, heuristics, mask = self._to_torch(obs, action_mask)
+            dist, value = self._masked_dist_and_value(board, pieces, pieces_left, heuristics, mask)
         action = dist.sample()
         log_prob = dist.log_prob(action)
         return (
@@ -104,6 +122,13 @@ class PPOAgent:
     @torch.no_grad()
     def predict_values(self, obs: dict, action_mask: np.ndarray) -> np.ndarray:
         """V(s) for bootstrapping the final step of a rollout."""
+        if self.use_afterstate:
+            heur = torch.from_numpy(obs["heuristics"]).to(self.device)
+            # Critic ignores the afterstate input — pass zeros.
+            n = heur.shape[0]
+            dummy_af = torch.zeros(n, 192, self.model.feature_dim, device=self.device)
+            _, value = self.model(dummy_af, heur)
+            return value.squeeze(-1).cpu().numpy()
         board, pieces, pieces_left, heuristics, mask = self._to_torch(obs, action_mask)
         _, value = self._masked_dist_and_value(board, pieces, pieces_left, heuristics, mask)
         return value.cpu().numpy()
@@ -118,11 +143,14 @@ class PPOAgent:
 
         for _ in range(self.n_epochs):
             for batch in buffer.get(self.batch_size, self.device):
-                board = batch.boards.unsqueeze(1)  # (B, 1, 8, 8)
-                if self.use_heuristics:
-                    logits, value = self.model(board, batch.pieces, batch.pieces_left, batch.heuristics)
+                if self.use_afterstate:
+                    logits, value = self.model(batch.afterstate_features, batch.heuristics)
                 else:
-                    logits, value = self.model(board, batch.pieces, batch.pieces_left)
+                    board = batch.boards.unsqueeze(1)  # (B, 1, 8, 8)
+                    if self.use_heuristics:
+                        logits, value = self.model(board, batch.pieces, batch.pieces_left, batch.heuristics)
+                    else:
+                        logits, value = self.model(board, batch.pieces, batch.pieces_left)
                 value = value.squeeze(-1)
 
                 logits = logits.masked_fill(~batch.action_masks, float("-inf"))
@@ -186,6 +214,7 @@ class PPOAgent:
             {"model_state_dict": self.model.state_dict(),
              "optimizer_state_dict": self.optimizer.state_dict(),
              "use_heuristics": self.use_heuristics,
+             "use_afterstate": self.use_afterstate,
              **extra},
             path,
         )
