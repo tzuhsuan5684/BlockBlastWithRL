@@ -27,6 +27,10 @@ from env import BlockBlastEnv
 from env.block_blast_env import HEURISTIC_DIM
 from agents.ppo.ppo_agent import PPOAgent
 from agents.ppo.rollout_buffer import RolloutBuffer
+from agents.ppo.afterstate import (
+    compute_afterstate_features_batch,
+    AFTERSTATE_FEATURE_DIM,
+)
 
 
 # Module-level so SubprocVecEnv can pickle it on Windows (spawn start method).
@@ -55,6 +59,10 @@ def parse_args():
     p.add_argument("--use-heuristics", action="store_true",
                    help="feed Tier-1 heuristic features (40-d) into the actor-critic; "
                         "enables BlockBlastActorCriticH instead of the base network")
+    p.add_argument("--use-afterstate", action="store_true",
+                   help="afterstate-evaluating actor (paper arXiv:2603.26765 Eq.6): "
+                        "score each action's post-placement features with a shared "
+                        "linear layer; mutually exclusive with --use-heuristics")
     p.add_argument("--ckpt-dir",  type=str, default="checkpoints")
     p.add_argument("--log-dir",   type=str, default="runs")
     p.add_argument("--ckpt-every", type=int, default=50_000,
@@ -63,7 +71,10 @@ def parse_args():
 
 
 def train(args):
-    tag = f"ppo_{args.reward}{'_h' if args.use_heuristics else ''}_seed{args.seed}"
+    assert not (args.use_heuristics and args.use_afterstate), \
+        "--use-heuristics and --use-afterstate are mutually exclusive"
+    suffix = "_h" if args.use_heuristics else ("_af" if args.use_afterstate else "")
+    tag = f"ppo_{args.reward}{suffix}_seed{args.seed}"
     ckpt_dir = Path(args.ckpt_dir); ckpt_dir.mkdir(parents=True, exist_ok=True)
     # If ckpt-dir was created by run_ppo.py its basename ends with YYYYMMDD_HHMMSS;
     # reuse that so the TensorBoard run lines up with the checkpoint folder.
@@ -86,11 +97,16 @@ def train(args):
         max_grad_norm=args.max_grad_norm,
         n_epochs=args.n_epochs, batch_size=args.batch_size,
         use_heuristics=args.use_heuristics,
+        use_afterstate=args.use_afterstate,
         device=device,
     )
+    # Afterstate critic still uses the env's 40-d heuristic vector as its V(s)
+    # input, so we need to store it in the buffer in afterstate mode too.
+    buffer_heur_dim = HEURISTIC_DIM if (args.use_heuristics or args.use_afterstate) else 0
     buffer = RolloutBuffer(
         n_steps=args.n_steps, n_envs=args.n_envs,
-        heuristic_dim=HEURISTIC_DIM if args.use_heuristics else 0,
+        heuristic_dim=buffer_heur_dim,
+        afterstate_feature_dim=AFTERSTATE_FEATURE_DIM if args.use_afterstate else 0,
         gamma=args.gamma, gae_lambda=args.gae_lambda,
     )
     writer = SummaryWriter(log_dir=str(log_dir))
@@ -114,11 +130,19 @@ def train(args):
     for update in range(1, n_updates + 1):
         # --- collect rollout ---
         for _ in range(args.n_steps):
-            actions, log_probs, values = agent.select_action(obs, masks)
+            if args.use_afterstate:
+                # Each sub-env knows its current piece slots; fetch via VecEnv.
+                piece_ids = vec_env.get_attr("piece_shape_ids")
+                af_feats = compute_afterstate_features_batch(obs["board"], piece_ids, masks)
+                actions, log_probs, values = agent.select_action(obs, masks, af_feats)
+            else:
+                af_feats = None
+                actions, log_probs, values = agent.select_action(obs, masks)
             next_obs, rewards, dones, infos = vec_env.step(actions)
             next_masks = np.stack([info["action_mask"] for info in infos])
 
-            buffer.add(obs, actions, log_probs, values, rewards, dones, masks)
+            buffer.add(obs, actions, log_probs, values, rewards, dones, masks,
+                       afterstate_features=af_feats)
             ep_lengths += 1
 
             if dones.any():

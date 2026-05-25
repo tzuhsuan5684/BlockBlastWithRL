@@ -25,6 +25,7 @@ class MiniBatch:
     advantages: torch.Tensor      # (B,) float32
     returns: torch.Tensor         # (B,) float32
     action_masks: torch.Tensor    # (B, 192) bool
+    afterstate_features: torch.Tensor  # (B, 192, F) float32 — empty (B, 0, 0) if afterstate disabled
 
 
 class RolloutBuffer:
@@ -36,6 +37,7 @@ class RolloutBuffer:
         board_shape: tuple = (8, 8),
         pieces_shape: tuple = (3, 5, 5),
         heuristic_dim: int = 0,
+        afterstate_feature_dim: int = 0,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
     ):
@@ -43,6 +45,7 @@ class RolloutBuffer:
         self.n_envs = n_envs
         self.n_actions = n_actions
         self.heuristic_dim = heuristic_dim
+        self.afterstate_feature_dim = afterstate_feature_dim
         self.gamma = gamma
         self.gae_lambda = gae_lambda
 
@@ -56,6 +59,9 @@ class RolloutBuffer:
         self.rewards      = np.zeros((n_steps, n_envs),                dtype=np.float32)
         self.dones        = np.zeros((n_steps, n_envs),                dtype=np.bool_)
         self.action_masks = np.zeros((n_steps, n_envs, n_actions),     dtype=np.bool_)
+        self.afterstate_features = np.zeros(
+            (n_steps, n_envs, n_actions, afterstate_feature_dim), dtype=np.float32
+        )
 
         self.advantages = np.zeros((n_steps, n_envs), dtype=np.float32)
         self.returns    = np.zeros((n_steps, n_envs), dtype=np.float32)
@@ -63,12 +69,14 @@ class RolloutBuffer:
         self.ptr = 0
         self.full = False
 
-    def add(self, obs, action, log_prob, value, reward, done, action_mask):
+    def add(self, obs, action, log_prob, value, reward, done, action_mask,
+            afterstate_features=None):
         """obs is a dict from VecEnv: {board, pieces, pieces_left[, heuristics]}.
 
         The heuristics key is only read when this buffer was constructed with
         heuristic_dim > 0; otherwise it is ignored (so the same call site works
-        for the no-heuristics ablation).
+        for the no-heuristics ablation). Likewise afterstate_features is only
+        stored when afterstate_feature_dim > 0.
         """
         assert not self.full, "buffer is full — call reset() first"
         i = self.ptr
@@ -77,6 +85,9 @@ class RolloutBuffer:
         self.pieces_left[i]  = obs["pieces_left"]
         if self.heuristic_dim > 0:
             self.heuristics[i] = obs["heuristics"]
+        if self.afterstate_feature_dim > 0:
+            assert afterstate_features is not None, "afterstate features required"
+            self.afterstate_features[i] = afterstate_features
         self.actions[i]      = action
         self.log_probs[i]    = log_prob
         self.values[i]       = value
@@ -123,6 +134,9 @@ class RolloutBuffer:
         flat_advantages   = self.advantages.reshape(total)
         flat_returns      = self.returns.reshape(total)
         flat_action_masks = self.action_masks.reshape(total, self.n_actions)
+        flat_afterstate   = self.afterstate_features.reshape(
+            total, self.n_actions, self.afterstate_feature_dim
+        )
 
         for start in range(0, total, batch_size):
             idx = indices[start:start + batch_size]
@@ -136,6 +150,7 @@ class RolloutBuffer:
                 advantages    = torch.from_numpy(flat_advantages[idx]).to(device),
                 returns       = torch.from_numpy(flat_returns[idx]).to(device),
                 action_masks  = torch.from_numpy(flat_action_masks[idx]).to(device),
+                afterstate_features = torch.from_numpy(flat_afterstate[idx]).to(device),
             )
 
     def reset(self):
