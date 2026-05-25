@@ -31,6 +31,14 @@ uv sync
 uv run python test_env.py
 ```
 
+[run_experiments.py](run_experiments.py) is the unified entry point — `train`, `eval`, and `demo` subcommands wrap the per-agent scripts:
+
+```bash
+uv run python run_experiments.py train ppo --reward dense        # or: train dqn / add --use-afterstate
+uv run python run_experiments.py eval                            # all 5 agents -> results/*.json + comparison_*.png
+uv run python run_experiments.py demo                            # pygame visualizer (latest PPO ckpt by default)
+```
+
 There is no lint/format/CI configured.
 
 ## Architecture
@@ -75,6 +83,8 @@ Members B (DQN) and C (PPO) are expected to use [`BlockBlastNet`](agents/network
 - [docs/ppo_journey.md](docs/ppo_journey.md) — narrative of Member C's PPO work, including the v1→v2 reward-coefficient diagnostic. Read this before re-tuning dense shaping.
 - [docs/improvement_options.md](docs/improvement_options.md) — three options (BC warm-start / bigger network / handcrafted features) to push PPO past its current ~4 score plateau, with impact/effort/cross-member trade-offs.
 - [test_env.py](test_env.py) — acceptance tests for the env contract.
+- [run_experiments.py](run_experiments.py) — unified `train` / `eval` / `demo` entry point (the only top-level CLI; per-agent `train_*.py` and `evaluate.py` modules are still callable but this script is the canonical wrapper).
+- [evaluation/](evaluation/) — `metrics_schema.save_metrics` defines the 11-field JSON contract; `aggregate.py` + `plot_comparison.py` consume `results/*.json` (invoked automatically by `run_experiments.py eval`).
 - `proposal.docx` exists but is not part of the runtime; ignore unless asked.
 
 ## Empirical Snapshot (2026-05)
