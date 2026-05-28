@@ -29,7 +29,23 @@ uv sync
 
 # Run the sanity test — required to pass before pushing env changes
 uv run python test_env.py
+
+# Train + eval + demo (convenience wrapper, uses dense reward by default)
+uv run python run_ppo.py                          # train → eval → demo
+uv run python run_ppo.py train --reward sparse
+uv run python run_ppo.py train --reward both
+uv run python run_ppo.py eval  --checkpoint path/to.pt
+
+# Train with heuristic or afterstate variants (must call train_ppo.py directly —
+# run_ppo.py does not forward these flags)
+uv run python -m agents.ppo.train_ppo --reward dense --use-heuristics
+uv run python -m agents.ppo.train_ppo --reward dense --use-afterstate
+
+# Monitor training
+uv run tensorboard --logdir runs/
 ```
+
+Checkpoints land in `checkpoints/<reward>_seed<N>_<timestamp>/`; eval JSON in `results/`.
 
 There is no lint/format/CI configured.
 
@@ -47,15 +63,31 @@ The codebase is small (env + agents/network.py + agents/ppo/ stack + a few helpe
 
 ### Observation contract
 
-`Dict({"board": (8,8) float32, "pieces": (3,5,5) float32})`. Each piece is rendered into its own 5×5 binary grid (largest shape is 5-wide); used slots are all-zeros. The [`obs_to_tensor`](agents/network.py) helper handles batched-vs-single obs and adds the CNN channel dim — use it instead of hand-rolling the conversion.
+`Dict` with four keys:
+
+| key | shape | notes |
+|---|---|---|
+| `board` | `(8,8) float32` | 0 empty / 1 filled |
+| `pieces` | `(3,5,5) float32` | each piece in a 5×5 binary grid; all-zeros when slot is used |
+| `pieces_left` | `(3,) float32` | binary; 1 if slot still has a piece |
+| `heuristics` | `(40,) float32` | Tier-1 hand-crafted features (all normalized to [0,1]): heights×8, holes×8, row_fill×8, col_fill×8, bumpiness×7, n_legal×1 |
+
+DQN (Member B) can safely ignore `pieces_left` and `heuristics` — the env added them without breaking existing board/pieces readers. The [`obs_to_tensor`](agents/network.py) helper extracts `board`, `pieces`, and `pieces_left` for `BlockBlastNet`/`BlockBlastActorCritic`; use it instead of hand-rolling the conversion.
 
 ### Network sharing for fair comparison
 
-Members B (DQN) and C (PPO) are expected to use [`BlockBlastNet`](agents/network.py) and [`BlockBlastActorCritic`](agents/network.py) respectively from the same file. Both share the same dual-branch backbone: `board → 2× Conv(3×3) → FC(128)` concatenated with `pieces → FC(64)`, then a `FC(128) → output` head. The point is that any performance gap between DQN and PPO should be attributable to the algorithm, not the encoder.
+Members B (DQN) and C (PPO) use [`BlockBlastNet`](agents/network.py) and [`BlockBlastActorCritic`](agents/network.py) respectively, both in the same file. The shared spatial-fusion backbone is: `board (1,8,8) → 2×Conv(3×3) → (64,8,8)` fused with `pieces (3,5,5) → piece_encoder (weight-shared) → pad → (48,8,8)` via a fusion conv → `FC(4096→128)`, then `cat(pieces_left) → FC(131→128) → heads`. Any performance gap between DQN and PPO is intended to be attributable to the algorithm, not the encoder.
+
+**PPO-only network extensions** (do not touch `agents/network.py`):
+
+- [`agents/ppo/network_heuristic.py`](agents/ppo/network_heuristic.py) — `BlockBlastActorCriticH`: subclasses `BlockBlastActorCritic`, replaces the final shared FC to additionally accept the 40-d heuristic vector via a small MLP. Activated with `--use-heuristics` in `train_ppo.py`.
+- [`agents/ppo/network_afterstate.py`](agents/ppo/network_afterstate.py) — `BlockBlastAfterstateActorCritic`: ~2.7k params; actor scores each action's afterstate features with a single shared linear layer (Chen et al. 2026, arXiv:2603.26765 Fig. 11); critic uses the 40-d heuristic vector. Activated with `--use-afterstate`.
+
+`--use-heuristics` and `--use-afterstate` are mutually exclusive. The checkpoint stores which mode was used so `evaluate.py` can reload the right model class.
 
 ### Reward shaping seam
 
-[`reward_functions.py`](reward_functions.py) holds the constants (`SPARSE_LINE_REWARD`, `DEATH_PENALTY`, `HOLE_PENALTY`, `BUMPINESS_PENALTY`); the env's `_dense_shaping()` reads `HOLE_PENALTY` and `BUMPINESS_PENALTY` from it via `from reward_functions import ...`. The wiring is complete — to tune dense rewards, only edit `reward_functions.py`. Current values: `HOLE_PENALTY = -0.02`, `BUMPINESS_PENALTY = -0.01`.
+[`reward_functions.py`](reward_functions.py) holds the constants (`SPARSE_LINE_REWARD`, `DEATH_PENALTY`, `HOLE_PENALTY`, `BUMPINESS_PENALTY`, `COMBO_STREAK_BONUS`); the env's `_dense_shaping()` reads `HOLE_PENALTY`, `BUMPINESS_PENALTY`, and `COMBO_STREAK_BONUS` from it via `from reward_functions import ...`. The wiring is complete — to tune dense rewards, only edit `reward_functions.py`. Current values: `HOLE_PENALTY = -0.02`, `BUMPINESS_PENALTY = -0.01`, `COMBO_STREAK_BONUS = 0.2` (reward multiplied by `1 + 0.2 × streak` for consecutive clears).
 
 **Hard-won lesson (don't re-learn it)**: at the proposal-default magnitude `(-0.1, -0.05)` and especially at `(-0.3, -0.1)` that briefly lived in the repo, per-step shaping (−1 to −3 in typical mid-game states) overwhelms the +1 line-clear reward. The PPO critic's value loss explodes (~150), `approx_kl` rises above 0.05, and policy gradient gets clipped out — the agent ends up "learning" to die early to avoid accumulating negative reward. Reducing magnitudes 5–15× (current `−0.02 / −0.01`) keeps shaping as a gentle nudge rather than a dominant force, and recovers `value_loss < 1`. See [docs/ppo_journey.md](docs/ppo_journey.md) for the full diagnostic chain.
 
@@ -66,11 +98,15 @@ Members B (DQN) and C (PPO) are expected to use [`BlockBlastNet`](agents/network
 ## Files Worth Knowing About
 
 - [README.md](README.md) — the canonical contract and per-member usage examples (Chinese).
-- [env/block_blast_env.py](env/block_blast_env.py) — env, action encoding, action masking, dense-shaping helpers.
-- [agents/network.py](agents/network.py) — shared CNN backbone and `obs_to_tensor`.
-- [agents/ppo/](agents/ppo/) — Member C's custom PPO (rollout buffer, agent, train, evaluate, BC pretraining if added).
+- [env/block_blast_env.py](env/block_blast_env.py) — env, action encoding, action masking, dense-shaping helpers, heuristic computation.
+- [agents/network.py](agents/network.py) — shared CNN backbone (`BlockBlastNet`, `BlockBlastActorCritic`) and `obs_to_tensor`.
+- [agents/ppo/ppo_agent.py](agents/ppo/ppo_agent.py) — `PPOAgent` dispatches across the three network modes (base / heuristic / afterstate).
+- [agents/ppo/afterstate.py](agents/ppo/afterstate.py) — simulates each legal placement on a board copy and extracts 9 DT-style features; mirrors `env/block_blast_env.py`'s placement logic — **keep in sync if env rules change**.
+- [agents/ppo/network_heuristic.py](agents/ppo/network_heuristic.py) — `BlockBlastActorCriticH`, extends base with 40-d heuristic MLP.
+- [agents/ppo/network_afterstate.py](agents/ppo/network_afterstate.py) — `BlockBlastAfterstateActorCritic`, ~2.7k params afterstate scorer.
 - [agents/greedy_agent.py](agents/greedy_agent.py) — one-step-lookahead baseline; useful reference for how to simulate an action without mutating env state.
 - [reward_functions.py](reward_functions.py) — dense-shaping coefficients (env imports from here, see "Reward shaping seam" above).
+- [run_ppo.py](run_ppo.py) — train/eval/demo automation wrapper; does **not** expose `--use-heuristics`/`--use-afterstate` (call `train_ppo.py` directly for those).
 - [demo/play.py](demo/play.py) — pygame visualizer; supports `--agent random/greedy/ppo` with `--checkpoint` for the PPO case.
 - [docs/ppo_journey.md](docs/ppo_journey.md) — narrative of Member C's PPO work, including the v1→v2 reward-coefficient diagnostic. Read this before re-tuning dense shaping.
 - [docs/improvement_options.md](docs/improvement_options.md) — three options (BC warm-start / bigger network / handcrafted features) to push PPO past its current ~4 score plateau, with impact/effort/cross-member trade-offs.
@@ -81,10 +117,12 @@ Members B (DQN) and C (PPO) are expected to use [`BlockBlastNet`](agents/network
 
 Reference numbers from Member C's 1M-step runs, useful as sanity checks if you re-train:
 
-| Agent | reward_mode | ep_score_mean | ep_score_max | notes |
-|---|---|---|---|---|
-| Random | — | ~2 | — | uniform-from-legal baseline |
-| PPO | sparse | 2.82 | ~14 | plateaus around 700k steps |
-| PPO | dense | 4.22 | ~16 | still improving at 1M; ablation winner |
+| Agent | reward_mode | network | ep_score_mean | ep_score_max | notes |
+|---|---|---|---|---|---|
+| Random | — | — | ~2 | — | uniform-from-legal baseline |
+| PPO | sparse | base | 2.82 | ~14 | plateaus around 700k steps |
+| PPO | dense | base | 4.22 | ~16 | still improving at 1M; ablation winner |
+| PPO | dense | heuristic (`--use-heuristics`) | TBD | TBD | not yet benchmarked |
+| PPO | dense | afterstate (`--use-afterstate`) | TBD | TBD | not yet benchmarked |
 
 If a new training run is producing `ep_score_mean < 1` with `value_loss > 50`, suspect that someone bumped the shaping coefficients back up — check `reward_functions.py` first.
