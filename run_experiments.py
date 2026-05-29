@@ -156,9 +156,9 @@ def cmd_eval(args: argparse.Namespace) -> None:
     missing: list[str] = []
 
     if not args.skip_random:
-        written.append(_run_baseline("Random", "sparse", args.episodes, args.seed))
+        written.append(_run_baseline("Random", args.reward_mode, args.episodes, args.seed))
     if not args.skip_greedy:
-        written.append(_run_baseline("Greedy", "sparse", args.episodes, args.seed))
+        written.append(_run_baseline("Greedy", args.reward_mode, args.episodes, args.seed))
 
     if not args.skip_dqn:
         ckpt = Path(args.dqn_ckpt) if args.dqn_ckpt else autoselect_dqn()
