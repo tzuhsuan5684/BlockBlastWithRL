@@ -154,6 +154,8 @@ def train(reward_mode: str = "sparse", seed: int = 0, total_steps: int = TOTAL_S
                 if recent_scores:
                     writer.add_scalar("rollout/ep_score_mean",
                                       np.mean(recent_scores[-50:]), global_step)
+                    writer.add_scalar("rollout/ep_score_max",
+                                      int(np.max(recent_scores[-50:])), global_step)
 
         if global_step % CKPT_EVERY == 0:
             ckpt_path = ckpt_dir / f"dqn_{reward_mode}_seed{seed}_step{global_step}.pt"
