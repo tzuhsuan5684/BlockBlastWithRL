@@ -151,9 +151,10 @@ class PPODemoAgent:
     def select_action(self, obs, action_mask: np.ndarray) -> int:
         torch = self.torch
         with torch.no_grad():
-            board  = torch.from_numpy(obs["board"]).to(self.device).unsqueeze(0).unsqueeze(0)
-            pieces = torch.from_numpy(obs["pieces"]).to(self.device).unsqueeze(0)
-            logits, _ = self.model(board, pieces)
+            board       = torch.from_numpy(obs["board"]).to(self.device).unsqueeze(0).unsqueeze(0)
+            pieces      = torch.from_numpy(obs["pieces"]).to(self.device).unsqueeze(0)
+            pieces_left = torch.from_numpy(obs["pieces_left"]).to(self.device).unsqueeze(0)
+            logits, _ = self.model(board, pieces, pieces_left)
             mask_t = torch.from_numpy(action_mask).to(self.device).unsqueeze(0)
             logits = logits.masked_fill(~mask_t, float("-inf"))
             return int(logits.argmax(dim=1).item())
@@ -225,6 +226,24 @@ def main():
 
         if do_step and flash_timer <= 0:
             action = agent.select_action(obs, mask)
+
+            # Detect which rows/cols will clear by simulating the placement on a
+            # board copy before stepping the env (env.step() places + clears in
+            # one shot, so the post-step board can't tell us which lines went).
+            piece_idx = action // 64
+            rem       = action % 64
+            place_row = rem // BOARD_SIZE
+            place_col = rem % BOARD_SIZE
+            pid       = env.piece_shape_ids[piece_idx]
+            board_after_place = env.board.copy()
+            if pid != -1:
+                for dr, dc in SHAPES[pid]:
+                    board_after_place[place_row + dr, place_col + dc] = 1.0
+            cleared_rows = [r for r in range(BOARD_SIZE)
+                            if np.all(board_after_place[r, :] == 1.0)]
+            cleared_cols = [c for c in range(BOARD_SIZE)
+                            if np.all(board_after_place[:, c] == 1.0)]
+
             obs, reward, terminated, truncated, info = env.step(action)
             mask  = info["action_mask"]
             score = info["score"]
@@ -232,11 +251,8 @@ def main():
 
             lines = info["lines_cleared"]
             if lines > 0:
-                flash_rows = [r for r in range(BOARD_SIZE)
-                              if np.all(env.board[r, :] == 0.0)]  # already cleared
-                flash_cols = [c for c in range(BOARD_SIZE)
-                              if np.all(env.board[:, c] == 0.0)]
-                # re-detect from pre-clear would need extra state; just flash all 0-rows briefly
+                flash_rows = cleared_rows
+                flash_cols = cleared_cols
                 flash_timer = 0.25
 
             if terminated or truncated:

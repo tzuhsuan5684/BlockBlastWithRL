@@ -8,11 +8,14 @@ Dense:   sparse  +HOLE_PENALTY×holes  +BUMPINESS_PENALTY×bumpiness
 Coefficient history:
 - proposal §3.1 default     : holes=-0.1,  bumpiness=-0.05
 - earlier in-repo (too harsh): holes=-0.3,  bumpiness=-0.1
-- current (tuned for PPO)   : holes=-0.02, bumpiness=-0.01
-  Reason: at -0.3/-0.1, per-step shaping (-1 to -3) dwarfed the +1
-  line-clear reward, causing critic value_loss to explode (~150) and
-  PPO policy_loss to stall near 0. Reduced ~15x to keep shaping
-  signal as a gentle nudge rather than a dominant force.
+- v2 (PPO 1M baseline)      : holes=-0.02, bumpiness=-0.01  → ep_score_mean ≈ 4.22
+- current (v3, 2× v2)       : holes=-0.04, bumpiness=-0.02
+  Reason: v2 was safe but dense PPO was still improving at 1M, suggesting
+  shaping signal was on the weak side. Doubling keeps per-step shaping
+  well below the +1 line-clear reward (~-0.6 to -1.2 in mid/late game)
+  so value_loss should stay bounded — but the gradient pushing toward
+  flatter, hole-free boards is twice as strong. If value_loss climbs
+  past ~5 or ep_score_mean drops below v2's 4.22, revert.
 """
 
 SPARSE_LINE_REWARD  = 1.0

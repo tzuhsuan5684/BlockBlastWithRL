@@ -36,13 +36,18 @@ import torch
 
 from env import BlockBlastEnv
 from agents.network import BlockBlastActorCritic
+from agents.ppo.network_heuristic import BlockBlastActorCriticH
+from agents.ppo.network_afterstate import BlockBlastAfterstateActorCritic
+from agents.ppo.afterstate import compute_afterstate_features
 
 
-def _obs_to_torch(obs: dict, device: torch.device):
+def _obs_to_torch(obs: dict, device: torch.device, use_heuristics: bool):
     board       = torch.from_numpy(obs["board"]).to(device).unsqueeze(0).unsqueeze(0)  # (1,1,8,8)
     pieces      = torch.from_numpy(obs["pieces"]).to(device).unsqueeze(0)              # (1,3,5,5)
     pieces_left = torch.from_numpy(obs["pieces_left"]).to(device).unsqueeze(0)         # (1,3)
-    return board, pieces, pieces_left
+    heuristics  = (torch.from_numpy(obs["heuristics"]).to(device).unsqueeze(0)
+                   if use_heuristics else None)                                         # (1,40)
+    return board, pieces, pieces_left, heuristics
 
 
 @torch.no_grad()
@@ -56,8 +61,15 @@ def evaluate(
 ) -> dict:
     device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = BlockBlastActorCritic().to(device)
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    use_heuristics = bool(ckpt.get("use_heuristics", False))
+    use_afterstate = bool(ckpt.get("use_afterstate", False))
+    if use_afterstate:
+        model = BlockBlastAfterstateActorCritic().to(device)
+    elif use_heuristics:
+        model = BlockBlastActorCriticH().to(device)
+    else:
+        model = BlockBlastActorCritic().to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
@@ -70,8 +82,17 @@ def evaluate(
         mask = info["action_mask"]
         steps = 0
         while True:
-            board, pieces, pieces_left = _obs_to_torch(obs, device)
-            logits, _ = model(board, pieces, pieces_left)
+            if use_afterstate:
+                af = compute_afterstate_features(obs["board"], env.piece_shape_ids, mask)
+                af_t = torch.from_numpy(af).to(device).unsqueeze(0)            # (1, 192, F)
+                heur_t = torch.from_numpy(obs["heuristics"]).to(device).unsqueeze(0)  # (1, 40)
+                logits, _ = model(af_t, heur_t)
+            else:
+                board, pieces, pieces_left, heuristics = _obs_to_torch(obs, device, use_heuristics)
+                if use_heuristics:
+                    logits, _ = model(board, pieces, pieces_left, heuristics)
+                else:
+                    logits, _ = model(board, pieces, pieces_left)
             mask_t = torch.from_numpy(mask).to(device).unsqueeze(0)
             logits = logits.masked_fill(~mask_t, float("-inf"))
             action = int(logits.argmax(dim=1).item())
