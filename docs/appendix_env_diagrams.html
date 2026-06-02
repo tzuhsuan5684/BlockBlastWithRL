@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Appendix Diagrams — Environment</title>
+<style>
+  :root{
+    --blue:#4472C4;          /* Office accent1 — banner / filled cells */
+    --blue-dark:#2E5597;     /* darker accent1 — sub-headings */
+    --blue-1:#2F5597;
+    --blue-2:#3D63B0;
+    --blue-3:#4472C4;
+    --blue-4:#5E84D0;
+    --blue-5:#8FAADC;
+    --blue-6:#B4C7E7;
+    --row-alt:#D9E1F2;       /* light accent1 — alternating table rows */
+    --orange:#ED7D31;        /* Office accent2 — anchor highlight */
+    --ink:#404040;
+    --grey:#A6A6A6;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:#E9E9E9;
+    font-family:'Calibri','Aptos','Segoe UI',Arial,sans-serif;color:var(--ink);}
+  .slide{
+    position:relative;width:1280px;height:720px;background:#FFFFFF;
+    margin:28px auto;box-shadow:0 4px 18px rgba(0,0,0,.18);overflow:hidden;
+  }
+  .banner{
+    margin:38px 44px 0;height:70px;background:var(--blue);
+    display:flex;align-items:center;padding-left:30px;
+  }
+  .banner h1{margin:0;color:#fff;font-size:32px;font-weight:700;letter-spacing:.3px;}
+  .subtitle{margin:22px 48px 6px;color:var(--blue-dark);font-size:25px;font-weight:700;}
+  .body{padding:6px 48px 0;}
+  .pageno{position:absolute;right:26px;bottom:18px;color:var(--grey);font-size:15px;}
+
+  /* ---------- Slide A : 40-D vector ---------- */
+  .vecbar{display:flex;height:96px;margin:14px 0 6px;border:1px solid #B8B8B8;}
+  .seg{flex-grow:1;flex-basis:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;color:#fff;text-align:center;
+    border-right:2px solid #fff;line-height:1.25;padding:4px 2px;min-width:70px;}
+  .seg:last-child{border-right:none;}
+  .seg .rng{font-size:13px;opacity:.92;}
+  .seg .nm{font-size:16px;font-weight:700;margin:2px 0;}
+  .seg .nz{font-size:13px;opacity:.92;}
+  .s1{background:var(--blue-1);} .s2{background:var(--blue-2);}
+  .s3{background:var(--blue-3);} .s4{background:var(--blue-4);}
+  .s5{background:var(--blue-5);} .s6{background:var(--blue-6);color:#1c1c1c;}
+
+  table.t{width:100%;border-collapse:collapse;margin-top:14px;font-size:16px;}
+  table.t th{background:var(--blue);color:#fff;text-align:left;
+    padding:8px 12px;font-weight:700;}
+  table.t td{padding:7px 12px;}
+  table.t tr:nth-child(even) td{background:var(--row-alt);}
+  table.t tr:nth-child(odd) td{background:#F4F6FB;}
+  code{font-family:'Consolas','Courier New',monospace;font-size:14px;
+    background:#EEF1F8;padding:1px 5px;border-radius:3px;color:#2b3a55;}
+  .note{margin-top:16px;font-size:16px;color:#5a5a5a;}
+  .note b{color:var(--blue-dark);}
+
+  /* ---------- Slide B : coordinate system ---------- */
+  .cols{display:flex;align-items:center;justify-content:space-between;
+    margin-top:10px;gap:8px;}
+  .panel{text-align:center;}
+  .panel .cap{font-size:18px;font-weight:700;color:var(--blue-dark);margin-bottom:10px;}
+  .panel .sub{font-size:14px;color:#6a6a6a;margin-top:8px;line-height:1.4;}
+  .gw{display:grid;justify-content:center;}
+  .lab{display:flex;align-items:center;justify-content:center;
+    color:var(--grey);font-size:13px;font-weight:700;}
+  .cell{border:1px solid #C9CFDB;background:#FAFBFD;
+    display:flex;align-items:center;justify-content:center;
+    font-size:16px;font-weight:700;color:#fff;}
+  .cell.fill{background:var(--blue);}
+  .cell.anchor{outline:3px dashed var(--orange);outline-offset:-3px;}
+  .mid{display:flex;flex-direction:column;align-items:center;gap:14px;min-width:230px;}
+  .arrow{font-size:60px;color:var(--blue);line-height:1;}
+  .formula{font-family:'Consolas','Courier New',monospace;font-size:18px;
+    color:#2b3a55;background:#EEF1F8;border:1px solid #cdd6ea;
+    border-radius:6px;padding:10px 14px;text-align:center;}
+  .formula .big{color:var(--orange);font-weight:700;}
+  .legend{margin-top:6px;font-size:14px;color:#6a6a6a;}
+  .chip{display:inline-block;width:14px;height:14px;border-radius:3px;
+    vertical-align:-2px;margin:0 4px 0 12px;}
+</style>
+</head>
+<body>
+
+<!-- ============ SLIDE A : 40-D HEURISTIC VECTOR ============ -->
+<div class="slide" id="slideA">
+  <div class="banner"><h1>Appendix</h1></div>
+  <div class="subtitle">Observation &mdash; 40-D Heuristic Feature Vector</div>
+  <div class="body">
+
+    <div style="font-size:16px;color:#5a5a5a;margin:2px 0 0;">
+      Six blocks concatenated into one length-40 vector, each normalized to [0,1],
+      all computed on the <b>current</b> board (state):
+    </div>
+
+    <div class="vecbar">
+      <div class="seg s1"><div class="rng">[0:8]</div><div class="nm">column<br>heights</div><div class="nz">8&nbsp;dims&nbsp;&middot;&nbsp;&divide;8</div></div>
+      <div class="seg s2"><div class="rng">[8:16]</div><div class="nm">holes<br>per&nbsp;column</div><div class="nz">8&nbsp;dims&nbsp;&middot;&nbsp;&divide;7</div></div>
+      <div class="seg s3"><div class="rng">[16:24]</div><div class="nm">row<br>fill&nbsp;counts</div><div class="nz">8&nbsp;dims&nbsp;&middot;&nbsp;&divide;8</div></div>
+      <div class="seg s4"><div class="rng">[24:32]</div><div class="nm">column<br>fill&nbsp;counts</div><div class="nz">8&nbsp;dims&nbsp;&middot;&nbsp;&divide;8</div></div>
+      <div class="seg s5"><div class="rng">[32:39]</div><div class="nm">bumpiness</div><div class="nz">7&nbsp;dims&nbsp;&middot;&nbsp;&divide;8</div></div>
+      <div class="seg s6"><div class="rng">[39:40]</div><div class="nm">n_legal</div><div class="nz">1&nbsp;dim&nbsp;&middot;&nbsp;&divide;192</div></div>
+    </div>
+    <div style="text-align:center;font-size:14px;color:#8a8a8a;">&larr;&nbsp;index 0 &nbsp;...........................................................................................&nbsp; index 39&nbsp;&rarr;</div>
+
+    <table class="t">
+      <tr><th style="width:150px;">Block</th><th style="width:70px;">Dims</th><th>Meaning</th><th style="width:230px;">Source</th></tr>
+      <tr><td>column heights</td><td>8</td><td>Top filled cell &rarr; bottom, per column (no gravity: counts gaps)</td><td><code>_column_heights()</code></td></tr>
+      <tr><td>holes per column</td><td>8</td><td>Empty cells underneath a filled cell, per column</td><td><code>_holes_per_col()</code></td></tr>
+      <tr><td>row fill counts</td><td>8</td><td>Filled cells in each of the 8 rows</td><td><code>board.sum(axis=1)</code></td></tr>
+      <tr><td>column fill counts</td><td>8</td><td>Filled cells in each of the 8 columns</td><td><code>board.sum(axis=0)</code></td></tr>
+      <tr><td>bumpiness</td><td>7</td><td>|height diff| of each adjacent column pair (kept per-pair, not summed)</td><td><code>abs(diff(heights))</code></td></tr>
+      <tr><td>n_legal</td><td>1</td><td>Number of currently legal actions &mdash; a "danger" signal</td><td><code>count_nonzero(mask)</code></td></tr>
+    </table>
+
+    <div class="note">
+      <b>Note:</b> distinct from the 9 afterstate features &mdash; these are per-row / per-column,
+      <b>normalized</b>, on the <b>current</b> state, and feed the <b>critic</b> V(s).
+    </div>
+  </div>
+  <div class="pageno">A</div>
+</div>
+
+<!-- ============ SLIDE B : SHARED COORDINATE SYSTEM ============ -->
+<div class="slide" id="slideB">
+  <div class="banner"><h1>Appendix</h1></div>
+  <div class="subtitle">Piece Rendering &harr; Placement: One Shared Anchor</div>
+  <div class="body">
+
+    <div style="font-size:16px;color:#5a5a5a;margin:2px 0 0;">
+      The same offsets <code>(dr, dc)</code> define both what the agent sees and where the piece lands.
+      Anchor = bounding-box <b>top-left</b> = cell <code>(0,0)</code> (example piece: <b>J&#8209;0</b>).
+    </div>
+
+    <div class="cols">
+
+      <!-- LEFT : 5x5 piece -->
+      <div class="panel">
+        <div class="cap">What the agent SEES<br><span style="font-weight:400;font-size:14px;color:#6a6a6a;">pieces[i] &mdash; 5&times;5 grid</span></div>
+        <div class="gw" id="grid5"></div>
+        <div class="sub"><code>shape_to_grid()</code>: <code>grid[dr][dc] = 1</code></div>
+      </div>
+
+      <!-- MIDDLE : mapping -->
+      <div class="mid">
+        <div class="formula">action&nbsp;(<span class="big">row=2, col=3</span>)<br><br><code style="background:none;">board[<span style="color:#ED7D31;">row</span>+dr][<span style="color:#ED7D31;">col</span>+dc]=1</code></div>
+        <div class="arrow">&rarr;</div>
+        <div style="font-size:14px;color:#6a6a6a;">same <code>(dr,dc)</code><br>just shifted by the anchor</div>
+      </div>
+
+      <!-- RIGHT : 8x8 board -->
+      <div class="panel">
+        <div class="cap">Where it is PLACED<br><span style="font-weight:400;font-size:14px;color:#6a6a6a;">board &mdash; 8&times;8 grid</span></div>
+        <div class="gw" id="grid8"></div>
+        <div class="sub"><code>step()</code>: writes <code>(row+dr, col+dc)</code></div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span class="chip" style="background:var(--blue);"></span>piece cell (number = same cell on both grids)
+      <span class="chip" style="outline:3px dashed var(--orange);outline-offset:-3px;background:#FAFBFD;"></span>anchor (0,0) / (row,col) &mdash; <b>may be empty</b>; padding always sits bottom-right
+    </div>
+    <div class="note">
+      <b>Why it matters:</b> the relative shape the agent <i>sees</i> in the 5&times;5 patch equals the
+      relative footprint it <i>places</i> on the board &mdash; no hidden coordinate conversion to learn.
+    </div>
+  </div>
+  <div class="pageno">B</div>
+</div>
+
+<script>
+// piece J-0 = [(0,1),(1,1),(2,0),(2,1)] ; placed at (row=2,col=3)
+function buildGrid(targetId, rows, cols, filledMap, anchorKey, cell){
+  const wrap = document.getElementById(targetId);
+  wrap.style.gridTemplateColumns = `22px repeat(${cols}, ${cell}px)`;
+  wrap.style.gridTemplateRows    = `22px repeat(${rows}, ${cell}px)`;
+  // top-left corner
+  wrap.appendChild(el('lab',''));
+  // column headers
+  for(let c=0;c<cols;c++) wrap.appendChild(el('lab', c));
+  for(let r=0;r<rows;r++){
+    wrap.appendChild(el('lab', r));           // row header
+    for(let c=0;c<cols;c++){
+      const key = r+','+c;
+      const d = document.createElement('div');
+      d.className = 'cell';
+      d.style.width = cell+'px'; d.style.height = cell+'px';
+      if(filledMap[key]!==undefined){ d.classList.add('fill'); d.textContent = filledMap[key]; }
+      if(key===anchorKey){ d.classList.add('anchor'); }
+      wrap.appendChild(d);
+    }
+  }
+}
+function el(cls, txt){ const d=document.createElement('div'); d.className=cls; d.textContent=txt; return d; }
+
+buildGrid('grid5', 5, 5, {'0,1':1,'1,1':2,'2,0':3,'2,1':4}, '0,0', 46);
+buildGrid('grid8', 8, 8, {'2,4':1,'3,4':2,'4,3':3,'4,4':4}, '2,3', 40);
+</script>
+</body>
+</html>

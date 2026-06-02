@@ -35,6 +35,7 @@ results/*.csv
 # Reports build artifacts
 report/figures/*.png
 *.pdf
+.playwright-mcp/
 
 # Jupyter
 .ipynb_checkpoints/
