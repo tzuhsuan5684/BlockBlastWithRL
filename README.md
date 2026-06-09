@@ -1,37 +1,10 @@
-# Block Blast RL — 開發手冊
+# Block Blast RL
 
-> 給組員 B、C、D、E 的環境使用說明。  
-> 有問題先看這份，再問組員 A。
-
----
-
-## Git 協作規則
-
-```bash
-# 各自開自己的 branch，不要直接在 main 上開發
-git checkout -b feature/dqn        # 組員 B
-git checkout -b feature/ppo        # 組員 C
-git checkout -b feature/reward     # 組員 D
-git checkout -b feature/baseline   # 組員 E
-```
-
-**禁止修改 `env/` 目錄下的任何檔案。**  
-有 bug 或新需求請告訴組員 A，由 A 統一修改並更新 main。
-
-每次開始工作前先 pull：
-```bash
-git pull origin main
-```
-
-開發完成後確認測試通過再 push：
-```bash
-uv run python test_env.py   # 必須全部 PASSED
-git push origin feature/你的branch名稱
-```
+使用 Gymnasium 訓練 RL agent 玩 Block Blast（8×8 方塊拼圖）。
 
 ---
 
-## 1. 安裝
+## 安裝
 
 ```bash
 # uv 管理依賴（pyproject.toml 為主，uv.lock 鎖版本）
@@ -56,7 +29,7 @@ print(obs["pieces_left"].shape)  # (3,)
 
 ---
 
-## 2. 環境基本規則
+## 環境基本規則
 
 | 項目 | 說明 |
 |------|------|
@@ -68,7 +41,7 @@ print(obs["pieces_left"].shape)  # (3,)
 
 ---
 
-## 3. Observation Space
+## Observation Space
 
 `reset()` 和 `step()` 都回傳一個 `dict`：
 
@@ -95,7 +68,7 @@ obs = {
 
 ---
 
-## 4. Action Space
+## Action Space
 
 ```
 Discrete(192)
@@ -124,7 +97,7 @@ action = encode_action(piece_idx=0, row=3, col=5)
 
 ---
 
-## 5. Action Mask（最重要）
+## Action Mask（最重要）
 
 非法動作（超出邊界、格子已填、slot 已用完）必須過濾，不然 agent 會學壞。
 
@@ -138,7 +111,7 @@ mask = info["action_mask"]   # shape (192,), dtype bool
 mask = env.action_masks()
 ```
 
-### 組員 B — DQN 用法
+### DQN 用法
 
 ```python
 q_values = model(obs)
@@ -146,7 +119,7 @@ q_values[~mask] = float("-inf")   # 非法動作設為 -inf
 action = q_values.argmax()
 ```
 
-### 組員 C — 自製 PPO 用法
+### PPO 用法
 
 ```python
 logits, value = model(board, pieces, pieces_left)
@@ -157,7 +130,7 @@ action = dist.sample()
 
 ---
 
-## 6. Reward
+## Reward
 
 ```python
 env = BlockBlastEnv(reward_mode="sparse")   # 預設
@@ -179,27 +152,15 @@ env = BlockBlastEnv(reward_mode="dense")    # 密集版
 
 注意：**score（得分顯示）仍用 `lines` 計算**，reward 才用平方 + streak 乘數。
 
-常數定義在 [reward_functions.py](reward_functions.py)，env 的 `_dense_shaping()` 已自動讀取。改係數只要動那個檔案即可，**不用碰 env**。
+常數定義在 [reward_functions.py](reward_functions.py)，env 的 `_dense_shaping()` 已自動讀取。改係數只要動那個檔案即可，不用碰 env。
 
 **目前係數（v3）**: `HOLE_PENALTY = -0.04`, `BUMPINESS_PENALTY = -0.02`, `COMBO_STREAK_BONUS = 0.2`。
-**目前係數（v3）**: `HOLE_PENALTY = -0.04`, `BUMPINESS_PENALTY = -0.02`, `COMBO_STREAK_BONUS = 0.2`。
 
-> 📜 **歷程注記**:
-> - proposal §3.1 原案 `-0.1 / -0.05`，v1 實際跑 `-0.3 / -0.1` → PPO `value_loss` 暴增到 ~150、policy 完全沒學起來。
-> - v2 降到 `-0.02 / -0.01` → dense PPO 分數從 1.89 跳到 4.22（+123%），但 1M step 仍未收斂，shaping 訊號偏弱。
-> - **v3（目前）** 加倍到 `-0.04 / -0.02` → 每步 shaping 仍遠小於 +1 line-clear，但推往「平整、無洞」的梯度更強。若 `value_loss > 5` 或 `ep_score_mean` 低於 v2 的 4.22 就 revert。
->
-> 完整實驗紀錄見 [docs/ppo_journey.md](docs/ppo_journey.md)。
-> 📜 **歷程注記**:
-> - proposal §3.1 原案 `-0.1 / -0.05`，v1 實際跑 `-0.3 / -0.1` → PPO `value_loss` 暴增到 ~150、policy 完全沒學起來。
-> - v2 降到 `-0.02 / -0.01` → dense PPO 分數從 1.89 跳到 4.22（+123%），但 1M step 仍未收斂，shaping 訊號偏弱。
-> - **v3（目前）** 加倍到 `-0.04 / -0.02` → 每步 shaping 仍遠小於 +1 line-clear，但推往「平整、無洞」的梯度更強。若 `value_loss > 5` 或 `ep_score_mean` 低於 v2 的 4.22 就 revert。
->
-> 完整實驗紀錄見 [docs/ppo_journey.md](docs/ppo_journey.md)。
+> 完整調參歷程見 [docs/ppo_journey.md](docs/ppo_journey.md)。
 
 ---
 
-## 7. 標準訓練迴圈（不用 SB3）
+## 標準訓練迴圈（不用 SB3）
 
 ```python
 import numpy as np
@@ -222,11 +183,11 @@ for step in range(500_000):
 
 ---
 
-## 8. PPO 訓練
+## PPO 訓練
 
-### 方式 A：`run_experiments.py` 一鍵腳本（推薦，跨平台）
+### 方式 A：`run_experiments.py` 一鍵腳本（推薦）
 
-統一入口,涵蓋訓練 / 評估 / demo,DQN 和 PPO 共用同一支腳本。
+統一入口，涵蓋訓練 / 評估 / demo，DQN 和 PPO 共用同一支腳本。
 
 ```bash
 # 訓練 PPO（dense reward，1M steps）
@@ -244,7 +205,7 @@ uv run python run_experiments.py train ppo --use-heuristics
 # 訓練 DQN
 uv run python run_experiments.py train dqn --reward dense --seed 0
 
-# 評估全部 5 個 agent (自動找最新 checkpoint),產生對比圖
+# 評估全部 5 個 agent（自動找最新 checkpoint），產生對比圖
 uv run python run_experiments.py eval
 
 # 指定特定 PPO checkpoint 評估
@@ -256,9 +217,9 @@ uv run python run_experiments.py demo --agent greedy
 ```
 
 腳本會自動：
-- 為每次 `train ppo` 建立帶時間戳的 `checkpoints/<reward>_seed<seed>_<YYYYMMDD_HHMMSS>/` 子目錄,避免覆蓋舊跑次。
-- 把 TensorBoard log 對齊到同一個時間戳（`runs/ppo_<reward>_seed<S>/<YYYYMMDD_HHMMSS>/`）,方便配對。
-- `eval` 產出 `results/<agent>_<reward>.json` 並執行 aggregate + plot,輸出 `summary.csv` + `comparison_score.png` / `comparison_steps.png`。
+- 為每次 `train ppo` 建立帶時間戳的 `checkpoints/<reward>_seed<seed>_<YYYYMMDD_HHMMSS>/` 子目錄，避免覆蓋舊跑次。
+- 把 TensorBoard log 對齊到同一個時間戳（`runs/ppo_<reward>_seed<S>/<YYYYMMDD_HHMMSS>/`），方便配對。
+- `eval` 產出 `results/<agent>_<reward>.json` 並執行 aggregate + plot，輸出 `summary.csv` + `comparison_score.png` / `comparison_steps.png`。
 
 ### 方式 B：直接 uv 指令
 
@@ -275,33 +236,26 @@ uv run python -m agents.ppo.train_ppo --reward dense  --seed 0
 | 參數 | 值 | 備註 |
 |------|----|----|
 | `--total-steps`   | 1_000_000 | dense 在 1M 才接近收斂；sparse ~700k 就 plateau |
-| `--total-steps`   | 1_000_000 | dense 在 1M 才接近收斂；sparse ~700k 就 plateau |
 | `--n-envs`        | 8 | 平行 env 數，SubprocVecEnv |
 | `--n-steps`       | 128 | 每個 env 每次 rollout 步數 → 一次 update 用 1024 transitions |
 | `--n-epochs`      | 10 | 每次 rollout 重複跑 10 個 epoch |
 | `--batch-size`    | 64 | mini-batch |
-| `--lr`            | 3e-4 | **Linear decay → 0**（對齊 SB3 預設 schedule） |
-| `--lr`            | 3e-4 | **Linear decay → 0**（對齊 SB3 預設 schedule） |
+| `--lr`            | 3e-4 | Linear decay → 0 |
 | `--gamma`         | 0.99 | |
 | `--gae-lambda`    | 0.95 | |
 | `--clip-range`    | 0.2 | PPO ratio 截斷範圍 |
-| `--ent-coef`      | 0.01 | 太小會 policy collapse，proposal 也提醒 |
+| `--ent-coef`      | 0.01 | 太小會 policy collapse |
 | `--vf-coef`       | 0.5 | value loss 權重 |
 | `--max-grad-norm` | 0.5 | gradient clipping |
 | `--ckpt-every`    | 50_000 | checkpoint 間隔（env steps） |
 
-> 預設值刻意對齊 SB3 MaskablePPO 預設，理由：「PPO 沒調好」這種質疑可以擋掉一輪。LR 用線性衰減（v3 起）讓後期 fine-tune 更穩。
-> 預設值刻意對齊 SB3 MaskablePPO 預設，理由：「PPO 沒調好」這種質疑可以擋掉一輪。LR 用線性衰減（v3 起）讓後期 fine-tune 更穩。
-
 訓練輸出：
 - `checkpoints/<reward>_seed<S>_<時間戳>/ppo_<reward>_seed<S>_step<N>.pt` — 每 50k steps 一次
-- `runs/ppo_<reward>_seed<S>/<時間戳>/` — TensorBoard event files（含新增的 `train/lr` 曲線）
-- `checkpoints/<reward>_seed<S>_<時間戳>/ppo_<reward>_seed<S>_step<N>.pt` — 每 50k steps 一次
-- `runs/ppo_<reward>_seed<S>/<時間戳>/` — TensorBoard event files（含新增的 `train/lr` 曲線）
+- `runs/ppo_<reward>_seed<S>/<時間戳>/` — TensorBoard event files
 
 ---
 
-## 9. 監看訓練曲線
+## 監看訓練曲線
 
 訓練期間另開 terminal：
 
@@ -322,34 +276,29 @@ uv run tensorboard --logdir runs
 
 ---
 
-## 10. 產生評估 JSON（交給組員 E）
+## 評估與 JSON 輸出
 
-實測 sparse 在 ~700k 就 plateau，dense 在 1M 仍有上升；預設 1M，較短跑可用 `--total-steps 500000`。
+```bash
+uv run python run_experiments.py eval
+```
 
-通常直接用 `run_experiments.py eval` 即可（自動找最新 checkpoint、自動命名輸出),手動跑：
+手動跑：
 
 ```bash
 uv run python -m agents.ppo.evaluate \
     --checkpoint checkpoints/sparse_seed0_<時間戳>/ppo_sparse_seed0_step1000000.pt \
-    --checkpoint checkpoints/sparse_seed0_<時間戳>/ppo_sparse_seed0_step1000000.pt \
     --reward sparse --episodes 100 --seed 42 \
     --out results/ppo_sparse.json \
-    --notes "PPO 1M steps, lr=3e-4 linear→0, ent_coef=0.01, shared backbone with DQN"
-    --notes "PPO 1M steps, lr=3e-4 linear→0, ent_coef=0.01, shared backbone with DQN"
+    --notes "PPO 1M steps, lr=3e-4 linear→0, ent_coef=0.01"
 
 uv run python -m agents.ppo.evaluate \
-    --checkpoint checkpoints/dense_seed0_<時間戳>/ppo_dense_seed0_step1000000.pt \
     --checkpoint checkpoints/dense_seed0_<時間戳>/ppo_dense_seed0_step1000000.pt \
     --reward dense --episodes 100 --seed 42 \
     --out results/ppo_dense.json \
     --notes "PPO 1M steps, dense v3 (HOLE_PENALTY=-0.04, BUMPINESS_PENALTY=-0.02)"
-    --notes "PPO 1M steps, dense v3 (HOLE_PENALTY=-0.04, BUMPINESS_PENALTY=-0.02)"
 ```
 
-產生 `results/ppo_*.json`，**這些檔要 commit**，組員 E 會從 git 收集所有人的 JSON 畫對比圖。
-產生 `results/ppo_*.json`，**這些檔要 commit**，組員 E 會從 git 收集所有人的 JSON 畫對比圖。
-
-JSON schema（11 欄，組員 E 訂）：
+JSON schema（11 欄）：
 
 ```json
 {
@@ -370,96 +319,7 @@ JSON schema（11 欄，組員 E 訂）：
 
 ---
 
-## 11. 各組員對接說明
-
-### 組員 B — DQN
-
-**共用網路（必須用 `agents/network.py`，確保與 C 架構一致）：**
-
-```python
-import torch
-from agents.network import BlockBlastNet, obs_to_tensor
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-net    = BlockBlastNet(output_dim=192).to(device)
-
-# obs_to_tensor 回傳 3-tuple（board, pieces, pieces_left）
-board, pieces, pieces_left = obs_to_tensor(obs, device)
-q_values = net(board, pieces, pieces_left)   # (1, 192)
-
-mask_t = torch.tensor(mask, device=device)
-q_values[~mask_t] = float("-inf")
-action = int(q_values.argmax(dim=1).item())
-```
-
-**replay buffer 要一起存 mask：**
-
-```python
-buffer.push(obs, action, reward, next_obs, terminated,
-            action_mask=mask, next_action_mask=next_mask)
-```
-
-取樣後，`next_mask` 用來 mask 掉 target Q 值裡的非法動作（Double DQN 標準做法）。
-
----
-
-### 組員 C — PPO
-
-採用**自製 PPO**，使用 `agents.network.BlockBlastActorCritic` 共用 backbone，與組員 B 的 DQN 完全相同網路結構，確保 RQ1 對比公平。
-
-**`agents/ppo/` 檔案架構：**
-
-| 檔案 | 角色 | 關鍵設計 |
-|------|------|----------|
-| `rollout_buffer.py` | 收集 rollout、算 advantage | **每筆 transition 連 action_mask 一起存**，update 時要重新 mask logits |
-| `ppo_agent.py` | PPO 演算法本身 | `logits.masked_fill(~mask, -inf)` 後接 `Categorical`，非法動作機率 = 0 |
-| `train_ppo.py` | 8 個 SubprocVecEnv 平行收集 | 每步從 `info["action_mask"]` 拿 mask；env 剛 reset 時要 `env_method("action_masks")` 重抓 |
-| `evaluate.py` | 最終評估 | **deterministic = argmax(masked logits)**，不是隨機 sample |
-
-開發歷程與後續方案：
-- **[docs/ppo_journey.md](docs/ppo_journey.md)** — 兩輪訓練 + 關鍵 reward 修復的完整紀錄（報告 PPO 章節寫作素材）
-- **[docs/improvement_options.md](docs/improvement_options.md)** — 突破當前分數的三個方案（BC warm start / 大網路 / 加 hand-crafted features），含影響範圍與工程量比較
-
----
-
-### 組員 D — Reward 設計
-
-✅ **`reward_functions.py` → `env._dense_shaping()` 的 wiring 已經接好**（2026-05 完成），改係數**只動 `reward_functions.py` 那一個檔**，env 會自動讀取：
-
-```python
-# reward_functions.py（D 動這裡就好）
-HOLE_PENALTY      = -0.04   # v3 目前值（v2 為 -0.02）
-BUMPINESS_PENALTY = -0.02   # v3 目前值（v2 為 -0.01）
-HOLE_PENALTY      = -0.04   # v3 目前值（v2 為 -0.02）
-BUMPINESS_PENALTY = -0.02   # v3 目前值（v2 為 -0.01）
-COMBO_STREAK_BONUS = 0.2    # 連續消除加成係數
-```
-
-跑比較實驗：
-
-```python
-env_sparse = BlockBlastEnv(reward_mode="sparse")
-env_dense  = BlockBlastEnv(reward_mode="dense")
-```
-
----
-
-### 組員 E — Baseline 評估
-
-```python
-from env import BlockBlastEnv
-from agents.random_agent import evaluate as random_eval
-from agents.greedy_agent import evaluate as greedy_eval
-
-env = BlockBlastEnv()
-print("Random:", random_eval(env, n_episodes=100))
-print("Greedy:", greedy_eval(env, n_episodes=100))
-# 回傳 mean_score, std_score, mean_steps, std_steps
-```
-
----
-
-## 12. 方塊形狀查詢
+## 方塊形狀查詢
 
 ```python
 from env.shapes import SHAPES, SHAPE_NAMES, N_SHAPES, print_shape
@@ -473,7 +333,7 @@ for i, (shape, name) in enumerate(zip(SHAPES, SHAPE_NAMES)):
 
 ---
 
-## 13. 快速除錯
+## 快速除錯
 
 ```python
 # 看盤面狀態
@@ -490,9 +350,7 @@ print(f"合法動作數：{mask.sum()}")
 
 ---
 
-## 14. CNN 網路架構（`agents/network.py`）
-
-B 和 C 共用同一份網路，確保對比公平。
+## CNN 網路架構（`agents/network.py`）
 
 ```
 board  (1,8,8)  → Conv(1→32,3×3)→Conv(32→64,3×3) → (64,8,8) ──┐
@@ -502,12 +360,12 @@ piece_1 (1,5,5) ─┼─ weight-shared Conv(1→16,3×3) → pad→(16,8,8)─�
 piece_2 (1,5,5) ─┘  → (48,8,8) total                                                         pieces_left (3,) ───────────────┘
 ```
 
-**關鍵設計：Spatial Fusion**（v2 起）：三個 piece 分支 padding 到 8×8 後，與 board feature map 在 channel 維度拼接，讓 conv 在同一空間解析度上比對盤面與方塊形狀，再壓縮成向量。`pieces_left (3,)` 在最後拼接，給模型「還剩幾個方塊」的顯式信號。
+三個 piece 分支 padding 到 8×8 後，與 board feature map 在 channel 維度拼接，讓 conv 在同一空間解析度上比對盤面與方塊形狀。`pieces_left (3,)` 在最後拼接，給模型「還剩幾個方塊」的顯式信號。
 
 | 類別 | 用途 | 輸出 |
 |------|------|------|
 | `BlockBlastNet` | DQN Q 網路 | `(B, 192)` Q 值 |
-| `BlockBlastActorCritic` | 自製 PPO | `(B, 192)` logits + `(B, 1)` value |
+| `BlockBlastActorCritic` | PPO | `(B, 192)` logits + `(B, 1)` value |
 | `obs_to_tensor(obs, device)` | numpy obs → tensor | `(board, pieces, pieces_left)` 3-tuple |
 
 ```python
@@ -518,15 +376,11 @@ output = net(board, pieces, pieces_left)
 
 ---
 
-## 15. Pygame Demo 視覺化
-
-安裝 pygame（若尚未安裝）：
+## Pygame Demo 視覺化
 
 ```bash
 uv add "pygame>=2.6"
 ```
-
-### 基本執行
 
 ```bash
 # greedy agent，每秒 4 步（預設）
@@ -535,8 +389,7 @@ uv run python demo/play.py
 # random agent
 uv run python demo/play.py --agent random
 
-# ★ 跑訓練好的 PPO checkpoint
-uv run python demo/play.py --agent ppo --checkpoint checkpoints/dense_seed0_<時間戳>/ppo_dense_seed0_step1000000.pt
+# 跑訓練好的 PPO checkpoint
 uv run python demo/play.py --agent ppo --checkpoint checkpoints/dense_seed0_<時間戳>/ppo_dense_seed0_step1000000.pt
 
 # 慢速，每秒 1 步
@@ -553,14 +406,6 @@ uv run python demo/play.py --episodes 5
 
 PPO 模式採 **deterministic argmax**（masked logits），跟 `evaluate.py` 產 JSON 的決策方式一致。
 
-### 跨機器跑 demo（在 server 訓練，在筆電播放）
-
-1. 在 server / GPU 機器上跑完訓練，產出 `checkpoints/ppo_*.pt`
-2. 把 `.pt` 檔（約 7 MB）拷到筆電（`scp` / 雲端 / USB 都行）
-3. 筆電上 `uv sync` 裝好 torch + pygame，跑上面的 PPO 指令
-
-`torch.load(map_location=...)` 會自動處理 GPU→CPU 轉換，不用管。
-
 ### 畫面說明
 
 | 區域 | 說明 |
@@ -569,7 +414,7 @@ PPO 模式採 **deterministic argmax**（masked logits），跟 `evaluate.py` �
 | 右側面板 | 當前 Score、步數、Episode 編號 |
 | 方塊預覽 | 三個待放方塊，各自用不同顏色標示 |
 
-### 串接自己的 Agent（例如組員 B 的 DQN）
+### 串接自訂 Agent
 
 `demo/play.py` 使用鴨子型別（duck typing）—— 任何有 `select_action(obs, mask)` 方法的物件都可以直接串。加到 `build_agent()` 即可：
 
@@ -580,7 +425,6 @@ def build_agent(name: str, env, checkpoint: str = None):
     if name == "ppo":
         return PPODemoAgent(env, checkpoint)
     if name == "dqn":
-        # 組員 B 寫好 DQN 後加這段
         from agents.dqn.dqn_agent import DQNDemoAgent
         return DQNDemoAgent(env, checkpoint)
     return GreedyAgent(env)
@@ -599,46 +443,44 @@ class MyAgent:
 
 ---
 
-## 16. 檔案結構
+## 檔案結構
 
 ```
 BlockBlastWithRL/
-├── env/                          # 組員 A 維護，禁止其他人修改
-│   ├── block_blast_env.py        # 已接上 reward_functions 的 dense shaping + combo streak
-│   ├── shapes.py
+├── env/
+│   ├── block_blast_env.py        # 環境主體（action encoding、masking、dense shaping）
+│   ├── shapes.py                 # 35 種方塊形狀定義
 │   └── __init__.py
 ├── agents/
-│   ├── network.py                # 共用 CNN backbone（空間融合版），B 和 C 都從這裡 import
-│   ├── random_agent.py           # 組員 E
-│   ├── greedy_agent.py           # 組員 E
-│   ├── dqn/                      # 組員 B 的地盤
-│   │   ├── train_dqn.py          # 訓練入口：uv run python -m agents.dqn.train_dqn
-│   │   ├── dqn_agent.py          # (B 自行新增)
-│   │   ├── replay_buffer.py      # (B 自行新增)
+│   ├── network.py                # 共用 CNN backbone（DQN 和 PPO 共用）
+│   ├── random_agent.py
+│   ├── greedy_agent.py
+│   ├── dqn/
+│   │   ├── train_dqn.py
+│   │   ├── dqn_agent.py
+│   │   ├── replay_buffer.py
 │   │   └── __init__.py
-│   └── ppo/                      # 組員 C 的地盤
-│       ├── train_ppo.py          # 訓練入口：uv run python -m agents.ppo.train_ppo
-│       ├── ppo_agent.py          # PPO 演算法核心
-│       ├── rollout_buffer.py     # GAE-λ buffer，存 action_mask + pieces_left
-│       ├── evaluate.py           # 載入 ckpt 跑 N 集 → JSON（E 的 schema）
+│   └── ppo/
+│       ├── train_ppo.py
+│       ├── ppo_agent.py
+│       ├── rollout_buffer.py
+│       ├── evaluate.py
 │       └── __init__.py
 ├── demo/
-│   └── play.py                   # Pygame 視覺化 demo（random / greedy / ppo）
-├── docs/                         # 開發歷程 + 討論文件
-│   ├── ppo_journey.md            # 組員 C 的 PPO 開發紀錄（報告素材）
+│   └── play.py                   # Pygame 視覺化 demo
+├── docs/
+│   ├── ppo_journey.md            # PPO 調參歷程紀錄
 │   └── improvement_options.md    # 進一步突破分數的方案討論
-├── evaluation/                   # 跨 agent 統一指標 + 對比圖
-│   ├── metrics_schema.py         # save_metrics / load_metrics（5 個 agent 共用 JSON 格式）
+├── evaluation/
+│   ├── metrics_schema.py         # save_metrics / load_metrics
 │   ├── run_baselines.py          # Random + Greedy 跑 N 局 → JSON
 │   ├── aggregate.py              # results/*.json → summary.csv
 │   └── plot_comparison.py        # results/*.json → comparison_*.png
-├── results/                      # 各人交給組員 E 的 JSON（commit 進 git）
-├── reward_functions.py           # 組員 D 修改（env 自動讀取）
-├── run_experiments.py            # 跨平台統一入口：train / eval / demo 三個 subcommand
-├── test_env.py                   # 環境驗證，push 前必跑
-├── README.md                     # 本文件
-├── CLAUDE.md                     # 給 Claude Code 用的 repo 導覽
-├── pyproject.toml + uv.lock      # uv 主依賴管理
+├── results/                      # 各 agent 的評估 JSON
+├── reward_functions.py           # dense shaping 係數（env 自動讀取）
+├── run_experiments.py            # 統一入口：train / eval / demo
+├── test_env.py                   # 環境驗證測試
+├── pyproject.toml + uv.lock
 └── .python-version               # 3.13
 ```
 
