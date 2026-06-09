@@ -15,6 +15,7 @@ dependencies = [
     "tensorboard>=2.16",
     "torch>=2.2",
     "imageio[ffmpeg]>=2.34",
+    "python-pptx>=1.0.2",
 ]
 
 [[tool.uv.index]]
