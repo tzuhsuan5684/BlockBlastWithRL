@@ -138,23 +138,36 @@ class PPODemoAgent:
     def __init__(self, env, checkpoint_path: str):
         import torch
         from agents.network import BlockBlastActorCritic
+        from agents.ppo.network_afterstate import BlockBlastAfterstateActorCritic
 
         self.env = env
         self.torch = torch
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = BlockBlastActorCritic().to(self.device)
         ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        self.use_afterstate = bool(ckpt.get("use_afterstate", False))
+        if self.use_afterstate:
+            self.model = BlockBlastAfterstateActorCritic().to(self.device)
+        else:
+            self.model = BlockBlastActorCritic().to(self.device)
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.eval()
-        print(f"[ppo] loaded {checkpoint_path}  (device={self.device})")
+        variant = "PPO-AF" if self.use_afterstate else "PPO"
+        print(f"[{variant}] loaded {checkpoint_path}  (device={self.device})")
 
     def select_action(self, obs, action_mask: np.ndarray) -> int:
         torch = self.torch
         with torch.no_grad():
-            board       = torch.from_numpy(obs["board"]).to(self.device).unsqueeze(0).unsqueeze(0)
-            pieces      = torch.from_numpy(obs["pieces"]).to(self.device).unsqueeze(0)
-            pieces_left = torch.from_numpy(obs["pieces_left"]).to(self.device).unsqueeze(0)
-            logits, _ = self.model(board, pieces, pieces_left)
+            if self.use_afterstate:
+                from agents.ppo.afterstate import compute_afterstate_features
+                af = compute_afterstate_features(obs["board"], self.env.piece_shape_ids, action_mask)
+                af_t   = torch.from_numpy(af).to(self.device).unsqueeze(0)
+                heur_t = torch.from_numpy(obs["heuristics"]).to(self.device).unsqueeze(0)
+                logits, _ = self.model(af_t, heur_t)
+            else:
+                board       = torch.from_numpy(obs["board"]).to(self.device).unsqueeze(0).unsqueeze(0)
+                pieces      = torch.from_numpy(obs["pieces"]).to(self.device).unsqueeze(0)
+                pieces_left = torch.from_numpy(obs["pieces_left"]).to(self.device).unsqueeze(0)
+                logits, _ = self.model(board, pieces, pieces_left)
             mask_t = torch.from_numpy(action_mask).to(self.device).unsqueeze(0)
             logits = logits.masked_fill(~mask_t, float("-inf"))
             return int(logits.argmax(dim=1).item())
@@ -170,6 +183,94 @@ def build_agent(name: str, env, checkpoint: str = None):
     return GreedyAgent(env)
 
 
+def _capture(screen) -> np.ndarray:
+    """Return (H, W, 3) uint8 array from the current pygame surface."""
+    return pygame.surfarray.array3d(screen).transpose(1, 0, 2)
+
+
+def run_record_mode(agent, env, screen, font, font_lg, n_episodes: int,
+                    output: str, video_fps: int) -> None:
+    """Run n_episodes, save the highest-scoring episode as a video."""
+    import imageio
+
+    best_score = -1
+    best_frames: list = []
+    cur_frames:  list = []
+
+    for ep in range(1, n_episodes + 1):
+        cur_frames = []
+        obs, info = env.reset()
+        mask  = info["action_mask"]
+        score = 0
+        steps = 0
+        terminated = truncated = False
+
+        # render initial frame
+        screen.fill(BG)
+        draw_board(screen, env.board)
+        draw_grid(screen)
+        draw_panel(screen, score, steps, ep, env.piece_shape_ids, font, font_lg)
+        pygame.display.flip()
+        cur_frames.append(_capture(screen))
+
+        flash_rows: list = []
+        flash_cols: list = []
+
+        while not (terminated or truncated):
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return
+
+            action = agent.select_action(obs, mask)
+
+            piece_idx = action // 64
+            rem       = action % 64
+            place_row = rem // BOARD_SIZE
+            place_col = rem % BOARD_SIZE
+            pid       = env.piece_shape_ids[piece_idx]
+            board_after = env.board.copy()
+            if pid != -1:
+                for dr, dc in SHAPES[pid]:
+                    board_after[place_row + dr, place_col + dc] = 1.0
+            cleared_rows = [r for r in range(BOARD_SIZE) if np.all(board_after[r, :] == 1.0)]
+            cleared_cols = [c for c in range(BOARD_SIZE) if np.all(board_after[:, c] == 1.0)]
+
+            obs, _, terminated, truncated, info = env.step(action)
+            mask  = info["action_mask"]
+            score = info["score"]
+            steps = info["steps"]
+
+            if info["lines_cleared"] > 0:
+                flash_rows, flash_cols = cleared_rows, cleared_cols
+                # hold flash for 4 frames
+                for _ in range(4):
+                    screen.fill(BG)
+                    draw_board(screen, env.board, flash_rows, flash_cols)
+                    draw_grid(screen)
+                    draw_panel(screen, score, steps, ep, env.piece_shape_ids, font, font_lg)
+                    pygame.display.flip()
+                    cur_frames.append(_capture(screen))
+                flash_rows, flash_cols = [], []
+
+            screen.fill(BG)
+            draw_board(screen, env.board, flash_rows, flash_cols)
+            draw_grid(screen)
+            draw_panel(screen, score, steps, ep, env.piece_shape_ids, font, font_lg)
+            pygame.display.flip()
+            cur_frames.append(_capture(screen))
+
+        print(f"Episode {ep:3d}/{n_episodes}  score={score}  steps={steps}"
+              + ("  ← best so far" if score > best_score else ""))
+
+        if score > best_score:
+            best_score  = score
+            best_frames = cur_frames
+
+    print(f"\nSaving best episode (score={best_score}, {len(best_frames)} frames) → {output}")
+    imageio.mimwrite(output, best_frames, fps=video_fps)
+    print("Done.")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent", default="greedy", choices=["random", "greedy", "ppo"])
@@ -179,6 +280,12 @@ def main():
                         help="frames per second (0 = manual step with SPACE)")
     parser.add_argument("--episodes", type=int, default=0,
                         help="stop after N episodes (0 = run forever)")
+    parser.add_argument("--record", type=int, default=0, metavar="N",
+                        help="record mode: run N episodes and save the best as video")
+    parser.add_argument("--output", type=str, default="best_episode.mp4",
+                        help="output video path (default: best_episode.mp4)")
+    parser.add_argument("--record-fps", type=int, default=12,
+                        help="video frame rate (default: 12)")
     args = parser.parse_args()
 
     pygame.init()
@@ -191,6 +298,14 @@ def main():
 
     env   = BlockBlastEnv(reward_mode="dense")
     agent = build_agent(args.agent, env, checkpoint=args.checkpoint)
+
+    if args.record:
+        run_record_mode(agent, env, screen, font, font_lg,
+                        n_episodes=args.record,
+                        output=args.output,
+                        video_fps=args.record_fps)
+        pygame.quit()
+        return
 
     obs, info = env.reset()
     mask  = info["action_mask"]
